@@ -1859,3 +1859,201 @@ img,svg{max-width:100%}
 .pending-image-card{position:relative;min-width:0}
 .pending-image-card img{display:block;width:100%}
 .pending-image-card button{position:absolute;top:6px;right:6px;width:30px;height:30px;border:0;border-radius:50%;background:rgba(17,24,39,.86);color:#fff;display:grid;place-items:center;box-shadow:0 4px 10px rgba(0,0,0,.18)}
+
+/* =========================================================
+   V2.12.6 — CORREÇÃO DEFINITIVA DO ENQUADRAMENTO DAS IMAGENS
+   Mantém as imagens dentro dos cards e da galeria sem corte.
+   ========================================================= */
+
+/* Impede qualquer estouro horizontal da página do produto */
+.product-page,
+.product-layout,
+.product-gallery-wrap,
+.carousel-gallery,
+.gallery-main{
+  min-width:0!important;
+  max-width:100%!important;
+  box-sizing:border-box!important;
+}
+
+.product-page{
+  overflow-x:hidden!important;
+}
+
+.product-gallery-wrap{
+  width:100%!important;
+  overflow:hidden!important;
+}
+
+/* Galeria principal: bloco fixo e previsível */
+.carousel-gallery.gallery-main{
+  position:relative!important;
+  width:100%!important;
+  height:auto!important;
+  min-height:0!important;
+  aspect-ratio:4 / 3!important;
+  max-height:620px!important;
+  overflow:hidden!important;
+  border-radius:22px!important;
+  background:#f7f8fa!important;
+  border:1px solid #e5e7eb!important;
+  display:block!important;
+}
+
+.carousel-gallery.gallery-main > img{
+  position:absolute!important;
+  inset:0!important;
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+  margin:0!important;
+  padding:8px!important;
+  background:#fff!important;
+  border:0!important;
+  transform:none!important;
+}
+
+/* Mantém controles sempre dentro da imagem */
+.carousel-arrow,
+.carousel-play,
+.carousel-counter,
+.zoom-button{
+  max-width:calc(100% - 20px)!important;
+}
+
+/* Miniaturas nunca saem do bloco */
+.gallery-thumbs{
+  width:100%!important;
+  max-width:100%!important;
+  display:flex!important;
+  gap:10px!important;
+  overflow-x:auto!important;
+  overflow-y:hidden!important;
+  padding:3px 3px 8px!important;
+  scrollbar-width:thin;
+}
+
+.gallery-thumb{
+  flex:0 0 108px!important;
+  width:108px!important;
+  min-width:108px!important;
+  height:86px!important;
+  overflow:hidden!important;
+  background:#fff!important;
+}
+
+.gallery-thumb img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  object-fit:contain!important;
+  object-position:center!important;
+  padding:5px!important;
+  background:#fff!important;
+}
+
+/* Cards da home/destaques/relacionados */
+.product-card-premium{
+  overflow:hidden!important;
+  min-width:0!important;
+}
+
+.product-card-premium .product-card-link{
+  display:block!important;
+  min-width:0!important;
+  overflow:hidden!important;
+}
+
+.product-card-premium .product-image,
+.product-card-premium .product-image-fit{
+  position:relative!important;
+  overflow:hidden!important;
+  width:100%!important;
+  max-width:100%!important;
+  background:#f7f8fa!important;
+}
+
+.product-card-premium .product-image img,
+.product-card-premium .product-image-fit img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  object-fit:contain!important;
+  object-position:center!important;
+  margin:0!important;
+  padding:8px!important;
+  background:#fff!important;
+  transform:none!important;
+}
+
+/* Tela ampliada também preserva a imagem completa */
+.lightbox-image-wrap{
+  overflow:hidden!important;
+}
+
+.lightbox-image-wrap img{
+  display:block!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  object-fit:contain!important;
+  object-position:center!important;
+}
+
+@media(max-width:900px){
+  .product-layout{
+    grid-template-columns:minmax(0,1fr)!important;
+    width:100%!important;
+  }
+
+  .carousel-gallery.gallery-main{
+    aspect-ratio:1 / 1!important;
+    width:100%!important;
+    height:auto!important;
+    max-height:none!important;
+    border-radius:18px!important;
+  }
+
+  .carousel-gallery.gallery-main > img{
+    padding:6px!important;
+  }
+
+  .gallery-thumb{
+    flex-basis:82px!important;
+    width:82px!important;
+    min-width:82px!important;
+    height:72px!important;
+  }
+}
+
+@media(max-width:520px){
+  .product-page{
+    padding-left:12px!important;
+    padding-right:12px!important;
+  }
+
+  .carousel-gallery.gallery-main{
+    aspect-ratio:1 / 1!important;
+    border-radius:16px!important;
+  }
+
+  .carousel-gallery.gallery-main > img{
+    padding:4px!important;
+  }
+
+  .gallery-thumbs{
+    gap:7px!important;
+  }
+
+  .gallery-thumb{
+    flex-basis:72px!important;
+    width:72px!important;
+    min-width:72px!important;
+    height:64px!important;
+  }
+}
