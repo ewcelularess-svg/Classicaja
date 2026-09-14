@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.env.*
+backend/.venv
+backend/classificaja.db
+backend/uploads/*
+frontend/node_modules
+frontend/dist
+__pycache__
+*.pyc

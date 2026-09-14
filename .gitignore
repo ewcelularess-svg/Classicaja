@@ -1,0 +1,12 @@
+backend/.venv/
+backend/classificaja.db
+backend/uploads/*
+!backend/uploads/.gitkeep
+frontend/node_modules/
+frontend/dist/
+*.pyc
+__pycache__/
+.env
+.env.*
+!.env.example
+!backend/.env.local.example
