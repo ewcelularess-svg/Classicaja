@@ -57,7 +57,6 @@ export default function Product(){
  const chat=async()=>{try{const r=await api(`/api/products/${p.id}/conversation`,{method:'POST'});nav(`/mensagens?c=${r.conversation_id}`)}catch(e){if(!user)nav('/entrar');else alert(e.message)}};
  const share=()=>navigator.share?.({title:p.title,url:location.href})||navigator.clipboard?.writeText(location.href).then(()=>alert('Link copiado'));
  const report=async()=>{if(!user){nav('/entrar');return}const reason=prompt('Motivo da denúncia (fraude, item proibido, informação falsa...):');if(!reason)return;try{await api(`/api/products/${p.id}/report`,{method:'POST',body:JSON.stringify({reason,details:''})});alert('Denúncia enviada para moderação.')}catch(e){alert(e.message)}};
- const installment = p.installments && p.installments.amount ? p.installments : null;
  const promoActive = Boolean(p.promo_active || (p.original_price && Number(p.original_price) > Number(p.price)));
  const prevImage=()=>setActiveIndex(i=>(i-1+Math.max(images.length,1))%Math.max(images.length,1));
  const nextImage=()=>setActiveIndex(i=>(i+1)%Math.max(images.length,1));
@@ -91,7 +90,7 @@ export default function Product(){
       <h1>{p.title}</h1>
       {promoActive && p.original_price ? <div className="detail-old-price">de {money(p.original_price)}</div> : null}
       <div className="detail-price">{money(p.price)}</div>
-      {installment && <div className="detail-installment">Parcelamento: em até {installment.count}x de {money(installment.amount)}</div>}
+      <div className={`payment-mode-detail ${p.payment_mode==='installments'?'parcelado':'avista'}`}>{p.payment_mode==='installments'?'Aceita parcelamento — condições definidas pelo banco no checkout':'Venda à vista'}</div>
       <div className="location"><MapPin/> {p.neighborhood?`${p.neighborhood}, `:''}{p.city} - {p.state}</div>
       {user?.id===p.seller_id&&<Link className="edit-product-btn" to={`/editar/${p.id}`}><Pencil/> Editar anúncio</Link>}
       {user?.id!==p.seller_id&&<button className="chat-primary" onClick={chat}><MessageCircle/> Conversar no chat</button>}

@@ -2170,3 +2170,50 @@ img,svg{max-width:100%}
 .pix-security-warning{display:flex;align-items:flex-start;gap:9px;padding:12px;border-radius:13px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:11px;line-height:1.5}.pix-security-warning svg{width:18px;height:18px;flex:0 0 auto}.pix-master-note{padding:15px 17px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;color:#475569;font-size:12px;line-height:1.6}
 @media(max-width:1000px){.pix-provider-grid{grid-template-columns:1fr}.pix-master-intro{flex-direction:column}.pix-security-pill{white-space:normal}}
 @media(max-width:680px){.pix-integration-controls,.pix-credentials-grid{grid-template-columns:1fr}.pix-mode-field{grid-column:auto}.pix-integration-card{padding:16px}.pix-master-intro{padding:16px}.pix-master-intro h2{font-size:23px}.pix-provider-status-row{align-items:flex-start}.pix-main-badge,.pix-config-badge{font-size:9px}.master-admin-tabs{overflow-x:auto;justify-content:flex-start}.master-admin-tabs button{flex:0 0 auto}}
+
+
+/* =========================================================
+   V2.14.1 — FORMA DE VENDA SEM PARCELAS FIXAS NO CARD
+   ========================================================= */
+.payment-choice-box{
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  padding:16px;
+  background:#fafbfc;
+  display:grid;
+  gap:12px;
+}
+.payment-choice-box>div:first-child{display:grid;gap:4px}
+.payment-choice-box>div:first-child>b{font-size:14px;color:#111827}
+.payment-choice-box>div:first-child>span{font-size:12px;line-height:1.5;color:#64748b}
+.payment-choice-options{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.payment-choice-options label{
+  display:flex!important;
+  align-items:center;
+  gap:10px!important;
+  min-height:70px;
+  border:1px solid #dbe1e8;
+  border-radius:14px;
+  padding:12px;
+  background:#fff;
+  cursor:pointer;
+}
+.payment-choice-options label.selected{
+  border-color:#e11d48;
+  box-shadow:0 0 0 3px rgba(225,29,72,.08);
+  background:#fff7f9;
+}
+.payment-choice-options input{width:auto!important;accent-color:#e11d48}
+.payment-choice-options label>span{display:grid;gap:2px}
+.payment-choice-options b{font-size:14px}
+.payment-choice-options small{font-size:11px;color:#64748b}
+.payment-mode-detail{
+  margin-top:10px;
+  padding:10px 12px;
+  border-radius:12px;
+  font-size:13px;
+  font-weight:700;
+}
+.payment-mode-detail.avista{background:#f8fafc;color:#475569;border:1px solid #e2e8f0}
+.payment-mode-detail.parcelado{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa}
+@media(max-width:640px){.payment-choice-options{grid-template-columns:1fr}}

@@ -5,7 +5,7 @@ import {useNavigate} from 'react-router-dom';
 
 export default function Publish(){
  const [cats,setCats]=useState([]);
- const [form,setForm]=useState({title:'',description:'',price:'',original_price:'',category_slug:'',city:'',state:'PR',neighborhood:'',condition:'Usado'});
+ const [form,setForm]=useState({title:'',description:'',price:'',original_price:'',payment_mode:'cash',category_slug:'',city:'',state:'PR',neighborhood:'',condition:'Usado'});
  const [images,setImages]=useState([]);
  const [previews,setPreviews]=useState([]);
  const [err,setErr]=useState('');
@@ -37,6 +37,13 @@ export default function Publish(){
   </label>
   <label>Título do anúncio<input name="title" value={form.title} onChange={change} placeholder="Ex.: iPhone 15 128 GB" required/></label><label>Descrição<textarea name="description" value={form.description} onChange={change} rows="5" placeholder="Estado do produto, detalhes, acessórios..." required/></label>
   <div className="two-cols"><label>Preço (R$)<input name="price" value={form.price} onChange={change} type="number" min="0" step="0.01" required/></label><label>Preço anterior / promoção (opcional)<input name="original_price" value={form.original_price} onChange={change} type="number" min="0" step="0.01" placeholder="Ex.: 2500.00"/></label></div>
+  <div className="payment-choice-box">
+    <div><b>Forma de venda</b><span>Escolha como o comprador poderá pagar. O banco/gateway definirá as parcelas reais quando a integração estiver ativa.</span></div>
+    <div className="payment-choice-options">
+      <label className={form.payment_mode==='cash'?'selected':''}><input type="radio" name="payment_mode" value="cash" checked={form.payment_mode==='cash'} onChange={change}/><span><b>À vista</b><small>Pagamento único</small></span></label>
+      <label className={form.payment_mode==='installments'?'selected':''}><input type="radio" name="payment_mode" value="installments" checked={form.payment_mode==='installments'} onChange={change}/><span><b>Parcelado</b><small>Parcelas definidas pelo banco</small></span></label>
+    </div>
+  </div>
   <div className="two-cols"><label>Condição<select name="condition" value={form.condition} onChange={change}><option>Novo</option><option>Seminovo</option><option>Usado</option></select></label><div className="promo-hint-box"><Camera/><div><b>Dica:</b><span>Se o preço anterior for maior que o preço atual, o anúncio receberá o selo <b>Promoção</b>.</span></div></div></div>
   <label>Categoria<select name="category_slug" value={form.category_slug} onChange={change} required><option value="">Selecione</option>{cats.map(c=><option key={c.slug} value={c.slug}>{c.name}</option>)}</select></label>
   <div className="three-cols"><label>Cidade<input name="city" value={form.city} onChange={change} required/></label><label>Bairro<input name="neighborhood" value={form.neighborhood} onChange={change}/></label><label>UF<input name="state" value={form.state} onChange={change} maxLength="2" required/></label></div>{err&&<div className="form-error">{err}</div>}<button className="primary wide" disabled={busy}><CheckCircle2/>{busy?'Publicando...':'Publicar anúncio'}</button>

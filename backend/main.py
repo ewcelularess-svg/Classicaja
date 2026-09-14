@@ -472,6 +472,7 @@ def init_db():
             )
         ensure_column(db, "products", "image_urls", "TEXT")
         ensure_column(db, "products", "original_price", "REAL")
+        ensure_column(db, "products", "payment_mode", "TEXT NOT NULL DEFAULT 'cash'")
         ensure_column(db, "payment_orders", "provider", "TEXT")
         ensure_column(db, "payment_orders", "provider_payment_id", "TEXT")
         ensure_column(db, "payment_orders", "installments", "INTEGER")
@@ -806,17 +807,6 @@ def normalize_product_images(data):
     return urls[:8]
 
 
-def installment_info(price):
-    try:
-        value = float(price or 0)
-    except Exception:
-        value = 0
-    if value < 100:
-        return None
-    count = 12 if value >= 1200 else 10
-    return {"count": count, "amount": round(value / count, 2)}
-
-
 def product_dict(db, row, user_id: str | None = None):
     data = dict(row)
     seller = db.execute("SELECT id,name,phone,verified,created_at FROM users WHERE id=?", (data["seller_id"],)).fetchone()
@@ -843,13 +833,18 @@ def product_dict(db, row, user_id: str | None = None):
         original = None
     current = float(data.get("price") or 0)
     data["promo_active"] = bool(original and original > current)
-    data["installments"] = installment_info(current)
+    mode = str(data.get("payment_mode") or "cash").lower()
+    if mode not in {"cash", "installments"}:
+        mode = "cash"
+    data["payment_mode"] = mode
+    data["accepts_installments"] = mode == "installments"
+    data["payment_mode_label"] = "Parcelamento disponível" if mode == "installments" else "À vista"
     return data
 
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.13.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.14.1", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -1028,10 +1023,14 @@ def related_products(product_id: str, limit: int = 4, user=Depends(optional_user
 async def create_product(
     title: str = Form(...), description: str = Form(...), price: float = Form(...), category_slug: str = Form(...),
     city: str = Form(...), state: str = Form(...), neighborhood: str = Form(""), condition: str = Form("Usado"),
-    original_price: float | None = Form(default=None), images: list[UploadFile] = File(default=[]), image: UploadFile | None = File(default=None), user=Depends(current_user),
+    original_price: float | None = Form(default=None), payment_mode: str = Form("cash"),
+    images: list[UploadFile] = File(default=[]), image: UploadFile | None = File(default=None), user=Depends(current_user),
 ):
     if price < 0:
         raise HTTPException(400, "Preço inválido")
+    payment_mode = str(payment_mode or "cash").strip().lower()
+    if payment_mode not in {"cash", "installments"}:
+        raise HTTPException(400, "Forma de venda inválida")
     gallery_files = [img for img in (images or []) if getattr(img, "filename", None)]
     if image and image.filename:
         gallery_files.insert(0, image)
@@ -1046,9 +1045,9 @@ async def create_product(
         if not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
             raise HTTPException(400, "Categoria inválida")
         db.execute(
-            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,status,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, "active", now_iso(), now_iso()),
+            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", now_iso(), now_iso()),
         )
         db.commit()
     return {"id": pid}
@@ -1056,12 +1055,14 @@ async def create_product(
 
 @app.put("/api/products/{product_id}")
 def update_product(product_id: str, payload: dict, user=Depends(current_user)):
-    allowed = {"title", "description", "price", "category_slug", "city", "state", "neighborhood", "condition", "status", "original_price"}
+    allowed = {"title", "description", "price", "category_slug", "city", "state", "neighborhood", "condition", "status", "original_price", "payment_mode"}
     fields = [(k, payload[k]) for k in payload if k in allowed]
     if not fields:
         raise HTTPException(400, "Nenhum campo válido")
     if "status" in payload and payload["status"] not in {"active", "sold", "paused"}:
         raise HTTPException(400, "Status inválido")
+    if "payment_mode" in payload and payload["payment_mode"] not in {"cash", "installments"}:
+        raise HTTPException(400, "Forma de venda inválida")
     with conn() as db:
         row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
         if not row:

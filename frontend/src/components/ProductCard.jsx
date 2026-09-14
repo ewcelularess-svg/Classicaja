@@ -13,7 +13,6 @@ export default function ProductCard({p}){
   const [busy,setBusy]=useState(false);
   const promoActive = Boolean(p.promo_active || (p.original_price && Number(p.original_price) > Number(p.price)));
   const mainImage = (p.images && p.images[0]) || p.image_url;
-  const installment = p.installments && p.installments.amount ? p.installments : null;
 
   async function toggleFavorite(e){
     e.preventDefault();
@@ -52,7 +51,6 @@ export default function ProductCard({p}){
           <span className="price-label">Preço</span>
           {promoActive && p.original_price ? <div className="old-price">de {money(p.original_price)}</div> : null}
           <div className="price price-strong">{money(p.price)}</div>
-          {installment && <div className="installment-text">em até {installment.count}x de {money(installment.amount)}</div>}
         </div>
         <div className="title">{p.title}</div>
         <div className="meta"><MapPin size={14}/><span>{p.neighborhood?`${p.neighborhood}, `:''}{p.city} - {p.state}</span></div>
