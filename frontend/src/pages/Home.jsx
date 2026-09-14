@@ -1,8 +1,9 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Check, ChevronRight, Handshake, MapPin, Search, ShieldCheck, Sparkles, Tag, Users, X} from 'lucide-react';
+import {Check, ChevronLeft, ChevronRight, Handshake, MapPin, Search, ShieldCheck, Sparkles, Tag, Users, X} from 'lucide-react';
 import {Link, useSearchParams} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import ProductCard from '../components/ProductCard';
+import PartnerAdSpot from '../components/PartnerAdSpot';
 
 const money=(v)=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const rows = [
@@ -36,6 +37,7 @@ export default function Home(){
  const [plans,setPlans]=useState([]);
  const [partnerTop,setPartnerTop]=useState([]);
  const [partnerEnd,setPartnerEnd]=useState([]);
+ const [heroSlide,setHeroSlide]=useState(0);
  const [q,setQ]=useState(searchParams.get('q')||'');
  const [cat,setCat]=useState(searchParams.get('category')||'');
  const [sort,setSort]=useState('newest');
@@ -53,8 +55,8 @@ export default function Home(){
    api('/api/categories').then(setCategories);
    api('/api/public/stats').then(setStats).catch(()=>{});
    api('/api/plans').then(setPlans).catch(()=>setPlans([]));
-   api('/api/partner-ads?placement=home_top&limit=1').then(setPartnerTop).catch(()=>setPartnerTop([]));
-   api('/api/partner-ads?placement=feed_end&limit=3').then(setPartnerEnd).catch(()=>setPartnerEnd([]));
+   api('/api/partner-ads?slot=home_top&limit=1').then(setPartnerTop).catch(()=>setPartnerTop([]));
+   api('/api/partner-ads?slot=feed_end&limit=3').then(setPartnerEnd).catch(()=>setPartnerEnd([]));
  },[]);
 
  useEffect(()=>{
@@ -124,7 +126,24 @@ export default function Home(){
  }
 
  const featured=useMemo(()=>products.filter(p=>p.featured_active).slice(0,4),[products]);
- const preview=products[0];
+ const heroSlides=useMemo(()=>products.filter(p=>((p.images&&p.images[0])||p.image_url)).slice(0,6),[products]);
+ const activeHeroSlide=heroSlides[heroSlide]||heroSlides[0]||null;
+
+ useEffect(()=>{
+   if(!heroSlides.length){setHeroSlide(0);return}
+   if(heroSlide>=heroSlides.length) setHeroSlide(0);
+ },[heroSlides.length,heroSlide]);
+
+ useEffect(()=>{
+   if(heroSlides.length<2) return;
+   const timer=setInterval(()=>setHeroSlide(i=>(i+1)%heroSlides.length),4500);
+   return()=>clearInterval(timer);
+ },[heroSlides.length]);
+
+ function moveHeroSlide(step){
+   if(!heroSlides.length) return;
+   setHeroSlide(i=>(i+step+heroSlides.length)%heroSlides.length);
+ }
 
  return <>
   <section className="market-hero">
@@ -156,21 +175,39 @@ export default function Home(){
       </div>
     </div>
 
-    <div className="market-hero-visual" aria-hidden="true">
+    <div className="market-hero-visual hero-slider-visual">
       <div className="hero-orb hero-orb-one"/><div className="hero-orb hero-orb-two"/>
-      <div className="phone-mockup">
-        <div className="phone-speaker"/>
-        <div className="phone-screen">
-          <img className="phone-logo" src="/logo-classificaja.png" alt=""/>
-          <div className="phone-search"><Search/><span>Buscar produtos...</span></div>
-          <div className="phone-categories"><span>🚗<small>Carros</small></span><span>📱<small>Celulares</small></span><span>🏠<small>Imóveis</small></span></div>
-          <div className="phone-product">
-            <div className="phone-product-img">{preview?.image_url?<img src={imageUrl(preview.image_url)} alt=""/>:<span>🛍️</span>}</div>
-            <div><small>{preview?.category_name||'Anúncio local'}</small><b>{preview?.title||'Seu produto aqui'}</b><strong>{preview?.price?money(preview.price):'R$ 0,00'}</strong></div>
-          </div>
-        </div>
+      <div className="hero-slider-heading">
+        <span>EM ALTA AGORA</span>
+        <b>Veja o que acabou de chegar</b>
       </div>
-      <div className="hero-promo-copy">Tudo<br/>o que você<br/>procura,<br/><em>mais perto<br/>de você.</em></div>
+
+      {activeHeroSlide ? <div className="hero-live-slider">
+        <Link className="hero-live-slide" to={`/produto/${activeHeroSlide.id}`}>
+          <img
+            src={imageUrl((activeHeroSlide.images&&activeHeroSlide.images[0])||activeHeroSlide.image_url)}
+            alt={activeHeroSlide.title}
+          />
+          <div className="hero-slide-overlay">
+            <small>{activeHeroSlide.featured_active?'DESTAQUE':'NOVO ANÚNCIO'}</small>
+            <h3>{activeHeroSlide.title}</h3>
+            <strong>{money(activeHeroSlide.price)}</strong>
+            <span><MapPin size={14}/>{activeHeroSlide.city}{activeHeroSlide.state?` - ${activeHeroSlide.state}`:''}</span>
+          </div>
+        </Link>
+
+        {heroSlides.length>1 && <>
+          <button type="button" className="hero-slider-arrow prev" onClick={()=>moveHeroSlide(-1)} aria-label="Anúncio anterior"><ChevronLeft/></button>
+          <button type="button" className="hero-slider-arrow next" onClick={()=>moveHeroSlide(1)} aria-label="Próximo anúncio"><ChevronRight/></button>
+          <div className="hero-slider-dots" aria-label="Selecionar anúncio">
+            {heroSlides.map((item,index)=><button key={item.id} type="button" className={index===heroSlide?'active':''} onClick={()=>setHeroSlide(index)} aria-label={`Mostrar anúncio ${index+1}`}/>) }
+          </div>
+        </>}
+      </div> : <div className="hero-slider-empty">
+        <Sparkles/>
+        <b>Seus anúncios ganham vida aqui.</b>
+        <span>Publique o primeiro produto para aparecer no slider.</span>
+      </div>}
     </div>
   </section>
 
@@ -179,11 +216,8 @@ export default function Home(){
     <div className="category-grid premium-category-grid">{categories.map(c=><button key={c.slug} className={`category-card ${cat===c.slug?'active':''}`} onClick={()=>chooseCategory(c.slug)}><span>{c.icon}</span><b>{c.name}</b></button>)}</div>
   </section>
 
-  {partnerTop.length>0 && <section className="section partner-top-section" aria-label="Publicidade de parceiro">
-    {partnerTop.map(ad=>{
-      const content=<><div className="partner-top-copy"><span className="partner-sponsored-label"><Handshake/> PARCEIRO CLASSIFICAJÁ</span><strong>{ad.company_name}</strong><h3>{ad.title}</h3>{ad.subtitle&&<p>{ad.subtitle}</p>}<span className="partner-learn-more">Conhecer parceiro <ChevronRight/></span></div>{ad.image_url&&<div className="partner-top-image"><img src={ad.image_url} alt={ad.company_name}/></div>}</>;
-      return ad.target_url?<a key={ad.id} className="partner-top-banner" href={ad.target_url} target="_blank" rel="noreferrer sponsored">{content}</a>:<div key={ad.id} className="partner-top-banner">{content}</div>
-    })}
+  {partnerTop.length>0 && <section className="section partner-top-section" aria-label="Publicidade de parceiro Premium">
+    {partnerTop.map(ad=><PartnerAdSpot key={ad.id} ad={ad} variant="hero"/>)}
   </section>}
 
   {featured.length>0 && <section className="section dark-section"><div className="section-head light"><div><span className="section-kicker">PATROCINADOS</span><h2>Anúncios em destaque</h2></div></div><div className="horizontal-cards">{featured.map(p=><ProductCard key={p.id} p={p}/>)}</div></section>}
@@ -256,10 +290,7 @@ export default function Home(){
 
    {partnerEnd.length>0 && <div className="partner-end-block">
      <div className="partner-end-head"><div><span className="section-kicker">PARCEIROS DO CLASSIFICAJÁ</span><h3>Marcas que ajudam a movimentar negócios locais</h3></div><span className="partner-ad-note">Publicidade</span></div>
-     <div className="partner-end-grid">{partnerEnd.map(ad=>{
-       const card=<>{ad.image_url?<div className="partner-card-image"><img src={ad.image_url} alt={ad.company_name}/></div>:<div className="partner-card-placeholder"><Handshake/></div>}<div className="partner-card-copy"><small>PARCEIRO</small><b>{ad.company_name}</b><strong>{ad.title}</strong>{ad.subtitle&&<p>{ad.subtitle}</p>}</div></>;
-       return ad.target_url?<a key={ad.id} className="partner-card" href={ad.target_url} target="_blank" rel="noreferrer sponsored">{card}</a>:<div key={ad.id} className="partner-card">{card}</div>
-     })}</div>
+     <div className="partner-end-grid">{partnerEnd.map(ad=><PartnerAdSpot key={ad.id} ad={ad} variant="card"/>)}</div>
    </div>}
   </section>
  </>
