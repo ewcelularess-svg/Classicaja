@@ -130,6 +130,8 @@ export default function Home(){
     <div className="category-grid premium-category-grid">{categories.map(c=><button key={c.slug} className={`category-card ${cat===c.slug?'active':''}`} onClick={()=>chooseCategory(c.slug)}><span>{c.icon}</span><b>{c.name}</b></button>)}</div>
   </section>
 
+  {featured.length>0 && <section className="section dark-section"><div className="section-head light"><div><span className="section-kicker">PATROCINADOS</span><h2>Anúncios em destaque</h2></div></div><div className="horizontal-cards">{featured.map(p=><ProductCard key={p.id} p={p}/>)}</div></section>}
+
   {plans.length>0 && <section className="section plans-highlight-section" id="planos">
     <div className="plans-highlight-head">
       <div>
@@ -186,8 +188,6 @@ export default function Home(){
     </div>
     <div className="plans-highlight-note">Você ativa o plano logo após publicar o anúncio, sem complicação.</div>
   </section>}
-
-  {featured.length>0 && <section className="section dark-section"><div className="section-head light"><div><span className="section-kicker">PATROCINADOS</span><h2>Anúncios em destaque</h2></div></div><div className="horizontal-cards">{featured.map(p=><ProductCard key={p.id} p={p}/>)}</div></section>}
 
   <section className="section" id="produtos"><div className="section-head"><div><span className="section-kicker">CLASSIFICADOS</span><h2>Produtos</h2></div><select value={sort} onChange={e=>setSort(e.target.value)}><option value="newest">Mais recentes</option><option value="price_low">Menor preço</option><option value="price_high">Maior preço</option><option value="popular">Mais vistos</option></select></div>
    {products.length ? <div className="product-grid">{products.map(p=><ProductCard key={p.id} p={p}/>)}</div> : <div className="empty"><div>🛍️</div><h3>Nenhum anúncio encontrado</h3><p>Altere os filtros ou publique o primeiro anúncio nesta região.</p></div>}
