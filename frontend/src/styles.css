@@ -550,13 +550,21 @@ img,svg{max-width:100%}
 @media(max-width:520px){.manage-actions{grid-template-columns:1fr 1fr}.edit-product-btn{min-height:46px}}
 .brand-logo{
   display:block;
-  width:auto;
-  height:44px;
+  width:280px;
+  height:auto;
   object-fit:contain;
 }
 
 @media(max-width:900px){
   .brand-logo{
-    height:36px;
+    width:210px;
+    height:auto;
+  }
+}
+
+@media(max-width:600px){
+  .brand-logo{
+    width:170px;
+    height:auto;
   }
 }
