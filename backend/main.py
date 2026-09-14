@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -33,6 +33,7 @@ SUPABASE_SECRET_KEY = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_S
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "product-images").strip() or "product-images"
 USE_SUPABASE_STORAGE = bool(SUPABASE_URL and SUPABASE_SECRET_KEY)
 SEED_DEMO_DATA = os.getenv("SEED_DEMO_DATA", "false" if USE_POSTGRES else "true").lower() in {"1", "true", "yes", "sim"}
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 PAYMENT_CONFIG_SECRET = (os.getenv("PAYMENT_CONFIG_KEY") or "").strip()
 if not PAYMENT_CONFIG_SECRET:
@@ -128,7 +129,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.13.3")
+app = FastAPI(title="ClassificaJá API", version="2.16.0")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -462,6 +463,18 @@ def init_db():
               limitations_json TEXT,
               updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS publish_plan_access (
+              user_id TEXT PRIMARY KEY,
+              plan_code TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'ready',
+              payment_order_id TEXT,
+              product_id TEXT,
+              selected_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY(payment_order_id) REFERENCES payment_orders(id) ON DELETE SET NULL,
+              FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+            );
             """
         )
         # Migrations for V1 installations.
@@ -480,6 +493,15 @@ def init_db():
             is_default INTEGER NOT NULL DEFAULT 0,
             mode TEXT NOT NULL DEFAULT 'sandbox',
             credentials_enc TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS publish_plan_access (
+            user_id TEXT PRIMARY KEY,
+            plan_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            payment_order_id TEXT,
+            product_id TEXT,
+            selected_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""")
         for provider in PAYMENT_PROVIDER_DEFS:
@@ -606,10 +628,12 @@ class PaymentIn(BaseModel):
     product_id: Optional[str] = None
     plan_code: str
     method: str = "pix"
+    tax_id: Optional[str] = None
 
 
 class RenewPlanIn(BaseModel):
     method: str = "pix"
+    tax_id: Optional[str] = None
 
 
 class ModerationIn(BaseModel):
@@ -753,6 +777,38 @@ def get_plan(code: str, db=None, include_inactive=False):
     return next((p for p in plans if p.get("code") == code), None)
 
 
+def set_publish_plan_access(db, user_id: str, plan_code: str, status: str = "ready", payment_order_id: str | None = None, product_id: str | None = None):
+    now = now_iso()
+    db.execute(
+        """INSERT INTO publish_plan_access(user_id,plan_code,status,payment_order_id,product_id,selected_at,updated_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(user_id) DO UPDATE SET
+             plan_code=excluded.plan_code,
+             status=excluded.status,
+             payment_order_id=excluded.payment_order_id,
+             product_id=excluded.product_id,
+             selected_at=excluded.selected_at,
+             updated_at=excluded.updated_at""",
+        (user_id, plan_code, status, payment_order_id, product_id, now, now),
+    )
+
+
+def get_publish_plan_access(db, user_id: str):
+    row = db.execute("SELECT * FROM publish_plan_access WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        return {"ready": False, "status": "none", "plan": None}
+    data = dict(row)
+    plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+    return {
+        "ready": data.get("status") == "ready" and bool(plan),
+        "status": data.get("status") or "none",
+        "plan": plan,
+        "payment_order_id": data.get("payment_order_id"),
+        "product_id": data.get("product_id"),
+        "selected_at": data.get("selected_at"),
+    }
+
+
 def create_session(db, user_id: str):
     token = secrets.token_urlsafe(32)
     expires = (now_dt() + timedelta(days=30)).isoformat()
@@ -861,7 +917,7 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.14.1", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.16.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -1061,20 +1117,38 @@ async def create_product(
         original_price = None
     pid = str(uuid.uuid4())
     with conn() as db:
+        access_row = db.execute("SELECT * FROM publish_plan_access WHERE user_id=? AND status='ready'", (user["id"],)).fetchone()
+        if not access_row:
+            raise HTTPException(403, "Escolha um plano antes de publicar o anúncio")
+        access_data = dict(access_row)
+        selected_plan = get_plan(access_data.get("plan_code"), db, include_inactive=True)
+        if not selected_plan:
+            raise HTTPException(403, "O plano selecionado não está mais disponível")
         if not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
             raise HTTPException(400, "Categoria inválida")
         created_at = now_iso()
+        boost_level = int(selected_plan.get("boost") or 0)
+        is_featured = 1 if boost_level > 0 else 0
+        featured_until = None
+        if is_featured:
+            featured_until = (now_dt() + timedelta(days=int(selected_plan.get("days") or 0))).isoformat()
         db.execute(
-            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", created_at, created_at),
+            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,featured,featured_until,boost_level,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", is_featured, featured_until, boost_level, created_at, created_at),
         )
+        db.execute(
+            "UPDATE publish_plan_access SET status='used',product_id=?,updated_at=? WHERE user_id=?",
+            (pid, created_at, user["id"]),
+        )
+        if access_data.get("payment_order_id"):
+            db.execute("UPDATE payment_orders SET product_id=? WHERE id=?", (pid, access_data["payment_order_id"]))
         db.execute(
             "INSERT INTO notifications(id,type,product_id,title,body,created_at) VALUES (?,?,?,?,?,?)",
             (str(uuid.uuid4()), "new_product", pid, "Novo anúncio publicado", f"{title.strip()} • {city.strip()} - {state.strip().upper()}", created_at),
         )
         db.commit()
-    return {"id": pid}
+    return {"id": pid, "plan_code": selected_plan.get("code")}
 
 
 @app.put("/api/products/{product_id}")
@@ -1495,85 +1569,420 @@ def report_product(product_id: str, payload: ReportIn, user=Depends(current_user
 
 
 # Plans / payments -----------------------------------------------------------
+
+def _digits(value: str | None) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _validate_tax_id(value: str | None) -> str:
+    tax_id = _digits(value)
+    if len(tax_id) not in {11, 14}:
+        raise HTTPException(400, "Informe um CPF ou CNPJ válido para gerar o PIX PagBank")
+    return tax_id
+
+
+def _pagbank_base_url(mode: str) -> str:
+    return "https://api.pagseguro.com" if mode == "production" else "https://sandbox.api.pagseguro.com"
+
+
+def _pagbank_config(db, require_enabled: bool = True):
+    row = db.execute("SELECT * FROM payment_integrations WHERE provider='pagbank' LIMIT 1").fetchone()
+    if not row:
+        return None
+    if require_enabled and not bool(row["enabled"]):
+        return None
+    data = dict(row)
+    credentials = decrypt_payment_credentials(data.get("credentials_enc"))
+    token = str(credentials.get("token") or "").strip()
+    if not token:
+        return None
+    return {"mode": data.get("mode") or "sandbox", "token": token, "row": data}
+
+
+def _pagbank_headers(token: str, idempotency_key: str | None = None):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if idempotency_key:
+        headers["x-idempotency-key"] = "".join(ch for ch in idempotency_key if ch.isalnum())[:200]
+    return headers
+
+
+def _pagbank_customer(user: dict, tax_id: str):
+    customer = {
+        "name": str(user.get("name") or "Cliente ClassificaJa")[:120],
+        "email": str(user.get("email") or "")[:255],
+        "tax_id": tax_id,
+    }
+    phone = _digits(user.get("phone"))
+    if phone.startswith("55") and len(phone) >= 12:
+        phone = phone[2:]
+    if len(phone) in {10, 11}:
+        customer["phones"] = [{
+            "country": "55",
+            "area": phone[:2],
+            "number": phone[2:],
+            "type": "MOBILE",
+        }]
+    return customer
+
+
+def _activate_paid_order(db, order):
+    order_data = dict(order)
+    if order_data.get("status") == "paid":
+        return
+    plan = get_plan(order_data.get("plan_code"), db, include_inactive=True)
+    if order_data.get("plan_code") == "boost_7" and float(order_data.get("amount") or 0) > 0:
+        plan = {"name": "Básico legado 7 dias", "amount": float(order_data.get("amount") or 0), "days": 7, "boost": 1}
+    paid_at = now_iso()
+    db.execute("UPDATE payment_orders SET status='paid',paid_at=? WHERE id=?", (paid_at, order_data["id"]))
+    if order_data.get("product_id") and plan:
+        product = db.execute("SELECT featured_until FROM products WHERE id=?", (order_data["product_id"],)).fetchone()
+        base_dt = now_dt()
+        if product and product["featured_until"]:
+            try:
+                current_until = datetime.fromisoformat(product["featured_until"])
+                if current_until > base_dt:
+                    base_dt = current_until
+            except Exception:
+                pass
+        until = (base_dt + timedelta(days=int(plan.get("days") or 0))).isoformat()
+        db.execute(
+            "UPDATE products SET featured=1,featured_until=?,boost_level=?,updated_at=? WHERE id=?",
+            (until, int(plan.get("boost") or 0), now_iso(), order_data["product_id"]),
+        )
+    elif plan:
+        # Compra feita antes da publicação: libera uma nova publicação com este plano.
+        set_publish_plan_access(db, order_data["user_id"], order_data["plan_code"], "ready", order_data["id"], None)
+
+
+def _update_pagbank_order_from_payload(db, order, payload: dict):
+    order_data = dict(order)
+    charges = payload.get("charges") or []
+    charge = charges[0] if charges else payload if str(payload.get("id") or "").startswith("CHAR_") else {}
+    status = str(charge.get("status") or "").upper()
+    if status == "PAID":
+        _activate_paid_order(db, order_data)
+    elif status == "CANCELED":
+        db.execute("UPDATE payment_orders SET status='cancelled' WHERE id=? AND status<>'paid'", (order_data["id"],))
+    elif status == "DECLINED":
+        db.execute("UPDATE payment_orders SET status='failed' WHERE id=? AND status<>'paid'", (order_data["id"],))
+    elif status in {"WAITING", "AUTHORIZED", "IN_ANALYSIS"}:
+        db.execute("UPDATE payment_orders SET status='pending' WHERE id=? AND status<>'paid'", (order_data["id"],))
+
+
+def _create_pagbank_pix(order_id: str, user: dict, plan: dict, tax_id: str, request: Request, config: dict):
+    import httpx
+    amount_cents = int(round(float(plan.get("amount") or 0) * 100))
+    if amount_cents <= 0:
+        raise HTTPException(400, "Valor inválido para cobrança PagBank")
+    expiration = (now_dt() + timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    base_public = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+    webhook_url = f"{base_public}/api/webhooks/pagbank"
+    reference = f"CJ-{order_id}"
+    payload = {
+        "reference_id": reference[:64],
+        "customer": _pagbank_customer(user, tax_id),
+        "items": [{
+            "reference_id": str(plan.get("code") or "plano")[:255],
+            "name": str(plan.get("name") or "Plano ClassificaJa")[:200],
+            "quantity": 1,
+            "unit_amount": amount_cents,
+        }],
+        "charges": [{
+            "reference_id": order_id[:64],
+            "description": f"ClassificaJa - {str(plan.get('name') or 'Plano')}"[:64],
+            "amount": {"value": amount_cents, "currency": "BRL"},
+            "payment_method": {"type": "PIX", "pix": {"expiration_date": expiration}},
+        }],
+        "notification_urls": [webhook_url],
+    }
+    url = f"{_pagbank_base_url(config['mode'])}/orders"
+    try:
+        response = httpx.post(
+            url,
+            headers=_pagbank_headers(config["token"], order_id),
+            json=payload,
+            timeout=30,
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(502, f"Não foi possível conectar ao PagBank: {exc.__class__.__name__}")
+    try:
+        data = response.json()
+    except Exception:
+        data = {}
+    if response.status_code >= 300:
+        msg = data.get("error_messages") or data.get("message") or data.get("error") or response.text[:300]
+        raise HTTPException(502, f"PagBank recusou a criação do PIX: {msg}")
+    charges = data.get("charges") or []
+    charge = charges[0] if charges else {}
+    qr_code = charge.get("qr_code") or {}
+    links = charge.get("links") or []
+    qr_png = next((link.get("href") for link in links if link.get("rel") == "QRCODE.PNG"), None)
+    pix_code = qr_code.get("text")
+    if not pix_code:
+        raise HTTPException(502, "PagBank não retornou o código PIX")
+    safe_payload = {
+        "pagbank_order_id": data.get("id"),
+        "charge_id": charge.get("id"),
+        "charge_status": charge.get("status"),
+        "pix_code": pix_code,
+        "qr_png_url": qr_png,
+        "expiration_date": ((charge.get("payment_method") or {}).get("pix") or {}).get("expiration_date") or expiration,
+        "webhook_url": webhook_url,
+    }
+    return data, safe_payload
+
+
+def _sync_pagbank_payment(db, order, config: dict):
+    import httpx
+    order_data = dict(order)
+    external_id = order_data.get("external_id")
+    if not external_id:
+        return order_data.get("status")
+    url = f"{_pagbank_base_url(config['mode'])}/orders/{external_id}"
+    try:
+        response = httpx.get(url, headers=_pagbank_headers(config["token"]), timeout=20)
+        if response.status_code < 300:
+            payload = response.json()
+            _update_pagbank_order_from_payload(db, order_data, payload)
+            return (db.execute("SELECT status FROM payment_orders WHERE id=?", (order_data["id"],)).fetchone() or {}).get("status") if USE_POSTGRES else db.execute("SELECT status FROM payment_orders WHERE id=?", (order_data["id"],)).fetchone()["status"]
+    except Exception:
+        pass
+    return order_data.get("status")
+
+
 @app.get("/api/plans")
 def plans():
     with conn() as db:
         return get_plan_catalog(db, include_inactive=False)
 
 
+@app.get("/api/me/publish-plan")
+def my_publish_plan(user=Depends(current_user)):
+    with conn() as db:
+        return get_publish_plan_access(db, user["id"])
+
+
 @app.post("/api/payments")
-def create_payment(payload: PaymentIn, user=Depends(current_user)):
+def create_payment(payload: PaymentIn, request: Request, user=Depends(current_user)):
     if payload.method not in {"pix", "card"}:
         raise HTTPException(400, "Forma de pagamento inválida")
     with conn() as db:
         plan = get_plan(payload.plan_code, db, include_inactive=False)
-    if not plan:
-        raise HTTPException(400, "Plano inválido ou indisponível")
-    if plan.get("free") or float(plan.get("amount") or 0) <= 0:
-        return {
-            "id": None,
-            "status": "free",
-            "amount": 0.0,
-            "method": None,
-            "checkout_mode": "free",
-            "pix_code": None,
-            "installments": None,
-            "installment_source": "none",
-            "provider_installment_message": "Plano gratuito sem cobrança",
-        }
-    with conn() as db:
+        if not plan:
+            raise HTTPException(400, "Plano inválido ou indisponível")
+        if plan.get("free") or float(plan.get("amount") or 0) <= 0:
+            # Plano Grátis: libera a publicação imediatamente e não cria cobrança.
+            set_publish_plan_access(db, user["id"], plan["code"], "ready", None, None)
+            db.commit()
+            return {
+                "id": None, "status": "free", "amount": 0.0, "method": None,
+                "checkout_mode": "free", "pix_code": None, "installments": None,
+                "installment_source": "none", "provider_installment_message": "Plano gratuito ativado sem cobrança",
+            }
+        product = None
         if payload.product_id:
-            p = db.execute("SELECT * FROM products WHERE id=?", (payload.product_id,)).fetchone()
-            if not p or p["seller_id"] != user["id"]:
+            product = db.execute("SELECT * FROM products WHERE id=?", (payload.product_id,)).fetchone()
+            if not product or product["seller_id"] != user["id"]:
                 raise HTTPException(403, "Anúncio inválido")
         oid = str(uuid.uuid4())
-        installments = 1 if payload.method == "pix" else None
-        installment_source = "pix_single_payment" if payload.method == "pix" else "provider"
-        db.execute(
-            """INSERT INTO payment_orders(id,user_id,product_id,plan_code,amount,method,status,created_at,provider,installments,installment_source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (oid, user["id"], payload.product_id, payload.plan_code, plan["amount"], payload.method, "pending", now_iso(), "demo", installments, installment_source),
-        )
-        db.commit()
-    return {
-        "id": oid, "status": "pending", "amount": plan["amount"], "method": payload.method,
-        "checkout_mode": "demo",
-        "pix_code": f"DEMO-PIX-{oid[:8].upper()}" if payload.method == "pix" else None,
-        "installments": installments,
-        "installment_source": installment_source,
-        "provider_installment_message": "Parcelas serão fornecidas pelo gateway/banco" if payload.method == "card" else "PIX à vista",
-    }
+        if payload.method == "pix":
+            config = _pagbank_config(db)
+            if not config:
+                raise HTTPException(503, "PIX PagBank ainda não está ativo. Configure e ative o PagBank no Painel Master > Integrações PIX.")
+            tax_id = _validate_tax_id(payload.tax_id)
+            db.execute(
+                """INSERT INTO payment_orders(id,user_id,product_id,plan_code,amount,method,status,created_at,provider,installments,installment_source)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (oid, user["id"], payload.product_id, payload.plan_code, plan["amount"], "pix", "pending", now_iso(), "pagbank", 1, "pagbank_pix"),
+            )
+            db.commit()
+            try:
+                pagbank_data, safe_payload = _create_pagbank_pix(oid, user, plan, tax_id, request, config)
+            except HTTPException as exc:
+                with conn() as db2:
+                    db2.execute("UPDATE payment_orders SET status='failed',provider_payload=? WHERE id=?", (json.dumps({"error": exc.detail}, ensure_ascii=False), oid))
+                    db2.commit()
+                raise
+            charge = (pagbank_data.get("charges") or [{}])[0]
+            with conn() as db2:
+                db2.execute(
+                    "UPDATE payment_orders SET external_id=?,provider_payment_id=?,provider_payload=? WHERE id=?",
+                    (pagbank_data.get("id"), charge.get("id"), json.dumps(safe_payload, ensure_ascii=False), oid),
+                )
+                db2.commit()
+            return {
+                "id": oid,
+                "status": "pending",
+                "amount": plan["amount"],
+                "method": "pix",
+                "checkout_mode": "pagbank",
+                "provider": "pagbank",
+                "pix_code": safe_payload.get("pix_code"),
+                "qr_image_available": bool(safe_payload.get("qr_png_url")),
+                "expiration_date": safe_payload.get("expiration_date"),
+                "installments": 1,
+                "installment_source": "pagbank_pix",
+                "provider_installment_message": "PIX PagBank à vista",
+            }
+        # Cartão ainda não foi habilitado nesta integração.
+        raise HTTPException(503, "Pagamento por cartão ainda não está integrado. Use PIX PagBank.")
 
 
-@app.post("/api/payments/{payment_id}/demo-confirm")
-def demo_confirm_payment(payment_id: str, user=Depends(current_user)):
-    """Development helper. Replace by gateway webhook in production."""
+@app.get("/api/payments/{payment_id}/status")
+def payment_status(payment_id: str, user=Depends(current_user)):
     with conn() as db:
         order = db.execute("SELECT * FROM payment_orders WHERE id=?", (payment_id,)).fetchone()
         if not order or order["user_id"] != user["id"]:
             raise HTTPException(404, "Pagamento não encontrado")
-        if order["status"] == "paid":
-            return {"ok": True, "status": "paid"}
-        plan = get_plan(order["plan_code"], db, include_inactive=True)
-        # Preserve old paid Basic orders created before the free-plan migration.
-        if order["plan_code"] == "boost_7" and float(order["amount"] or 0) > 0:
-            plan = {"name": "Básico legado 7 dias", "amount": float(order["amount"]), "days": 7, "boost": 1}
-        paid_at = now_iso()
-        db.execute("UPDATE payment_orders SET status='paid',paid_at=? WHERE id=?", (paid_at, payment_id))
-        if order["product_id"] and plan:
-            product = db.execute("SELECT featured_until FROM products WHERE id=?", (order["product_id"],)).fetchone()
-            base_dt = now_dt()
-            if product and product["featured_until"]:
-                try:
-                    current_until = datetime.fromisoformat(product["featured_until"])
-                    if current_until > base_dt:
-                        base_dt = current_until
-                except Exception:
-                    pass
-            until = (base_dt + timedelta(days=plan["days"])).isoformat()
-            db.execute("UPDATE products SET featured=1,featured_until=?,boost_level=?,updated_at=? WHERE id=?", (until, plan["boost"], now_iso(), order["product_id"]))
+        if order["provider"] == "pagbank" and order["status"] == "pending":
+            config = _pagbank_config(db, require_enabled=False)
+            if config:
+                _sync_pagbank_payment(db, order, config)
+                db.commit()
+                order = db.execute("SELECT * FROM payment_orders WHERE id=?", (payment_id,)).fetchone()
+        return {"id": payment_id, "status": order["status"], "paid_at": order["paid_at"], "provider": order["provider"]}
+
+
+@app.get("/api/payments/{payment_id}/qrcode")
+def payment_qrcode(payment_id: str, user=Depends(current_user)):
+    import httpx
+    with conn() as db:
+        order = db.execute("SELECT * FROM payment_orders WHERE id=?", (payment_id,)).fetchone()
+        if not order or order["user_id"] != user["id"]:
+            raise HTTPException(404, "Pagamento não encontrado")
+        if order["provider"] != "pagbank":
+            raise HTTPException(400, "Este pagamento não usa QR Code PagBank")
+        config = _pagbank_config(db, require_enabled=False)
+        if not config:
+            raise HTTPException(503, "Integração PagBank indisponível")
+        try:
+            provider_payload = json.loads(order["provider_payload"] or "{}")
+        except Exception:
+            provider_payload = {}
+        qr_url = provider_payload.get("qr_png_url")
+        if not qr_url:
+            raise HTTPException(404, "Imagem do QR Code não disponível")
+    try:
+        response = httpx.get(qr_url, headers={"Authorization": f"Bearer {config['token']}", "Accept": "image/png"}, timeout=20)
+    except httpx.RequestError:
+        raise HTTPException(502, "Falha ao carregar QR Code do PagBank")
+    if response.status_code >= 300:
+        raise HTTPException(502, "PagBank não retornou a imagem do QR Code")
+    return {"data_url": "data:image/png;base64," + base64.b64encode(response.content).decode("ascii")}
+
+
+@app.post("/api/webhooks/pagbank")
+async def pagbank_webhook(request: Request):
+    raw = await request.body()
+    with conn() as db:
+        config = _pagbank_config(db, require_enabled=False)
+        if not config:
+            raise HTTPException(503, "Integração PagBank não configurada")
+        received_signature = request.headers.get("x-authenticity-token", "").strip().lower()
+        expected_signature = hashlib.sha256(config["token"].encode("utf-8") + b"-" + raw).hexdigest().lower()
+        if not received_signature or not secrets.compare_digest(received_signature, expected_signature):
+            raise HTTPException(401, "Assinatura do webhook PagBank inválida")
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            raise HTTPException(400, "Payload PagBank inválido")
+        order = None
+        provider_order_id = payload.get("id") if str(payload.get("id") or "").startswith("ORDE_") else None
+        charges = payload.get("charges") or []
+        charge = charges[0] if charges else payload if str(payload.get("id") or "").startswith("CHAR_") else {}
+        charge_id = charge.get("id")
+        reference_id = charge.get("reference_id")
+        if provider_order_id:
+            order = db.execute("SELECT * FROM payment_orders WHERE external_id=? LIMIT 1", (provider_order_id,)).fetchone()
+        if not order and charge_id:
+            order = db.execute("SELECT * FROM payment_orders WHERE provider_payment_id=? LIMIT 1", (charge_id,)).fetchone()
+        if not order and reference_id:
+            order = db.execute("SELECT * FROM payment_orders WHERE id=? LIMIT 1", (reference_id,)).fetchone()
+        if not order:
+            return {"ok": True, "ignored": True}
+        _update_pagbank_order_from_payload(db, order, payload)
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/payments/{payment_id}/demo-confirm")
+def demo_confirm_payment(payment_id: str, user=Depends(current_user)):
+    """Mantido somente para pagamentos antigos criados em modo demo."""
+    with conn() as db:
+        order = db.execute("SELECT * FROM payment_orders WHERE id=?", (payment_id,)).fetchone()
+        if not order or order["user_id"] != user["id"]:
+            raise HTTPException(404, "Pagamento não encontrado")
+        if order["provider"] == "pagbank":
+            raise HTTPException(400, "Pagamentos PagBank são confirmados automaticamente pelo banco")
+        _activate_paid_order(db, order)
         db.commit()
     return {"ok": True, "status": "paid"}
+
+
+@app.post("/api/products/{product_id}/cancel-feature")
+def cancel_product_feature(product_id: str, user=Depends(current_user)):
+    with conn() as db:
+        product = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not product:
+            raise HTTPException(404, "Anúncio não encontrado")
+        if product["seller_id"] != user["id"] and user["role"] != "admin":
+            raise HTTPException(403, "Você não pode editar este anúncio")
+        db.execute("UPDATE products SET featured=0,featured_until=NULL,boost_level=0,updated_at=? WHERE id=?", (now_iso(), product_id))
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/products/{product_id}/renew-feature")
+def renew_product_feature(product_id: str, payload: RenewPlanIn, request: Request, user=Depends(current_user)):
+    if payload.method != "pix":
+        raise HTTPException(503, "A renovação real está disponível por PIX PagBank")
+    with conn() as db:
+        product = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not product or product["seller_id"] != user["id"]:
+            raise HTTPException(404, "Anúncio não encontrado")
+        boost_level = int(product["boost_level"] or 0)
+        plan_meta = plan_meta_from_boost(boost_level)
+        plan_code = (plan_meta or {}).get("code")
+        if not plan_code or plan_code == "boost_7":
+            raise HTTPException(400, "Este anúncio não possui um plano pago renovável")
+        plan = get_plan(plan_code, db, include_inactive=True)
+        if not plan or float(plan.get("amount") or 0) <= 0:
+            raise HTTPException(400, "Plano indisponível para renovação")
+        config = _pagbank_config(db)
+        if not config:
+            raise HTTPException(503, "PIX PagBank ainda não está ativo no Painel Master")
+        tax_id = _validate_tax_id(payload.tax_id)
+        oid = str(uuid.uuid4())
+        db.execute(
+            """INSERT INTO payment_orders(id,user_id,product_id,plan_code,amount,method,status,created_at,provider,installments,installment_source)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (oid, user["id"], product_id, plan_code, plan["amount"], "pix", "pending", now_iso(), "pagbank", 1, "pagbank_pix"),
+        )
+        db.commit()
+    try:
+        pagbank_data, safe_payload = _create_pagbank_pix(oid, user, plan, tax_id, request, config)
+    except HTTPException as exc:
+        with conn() as db2:
+            db2.execute("UPDATE payment_orders SET status='failed',provider_payload=? WHERE id=?", (json.dumps({"error": exc.detail}, ensure_ascii=False), oid))
+            db2.commit()
+        raise
+    charge = (pagbank_data.get("charges") or [{}])[0]
+    with conn() as db2:
+        db2.execute(
+            "UPDATE payment_orders SET external_id=?,provider_payment_id=?,provider_payload=? WHERE id=?",
+            (pagbank_data.get("id"), charge.get("id"), json.dumps(safe_payload, ensure_ascii=False), oid),
+        )
+        db2.commit()
+    return {
+        "id": oid, "status": "pending", "amount": plan["amount"], "method": "pix",
+        "checkout_mode": "pagbank", "provider": "pagbank", "pix_code": safe_payload.get("pix_code"),
+        "qr_image_available": bool(safe_payload.get("qr_png_url")), "expiration_date": safe_payload.get("expiration_date"),
+        "plan_name": plan.get("name"), "product_title": product["title"],
+    }
 
 
 @app.get("/api/me/payments")

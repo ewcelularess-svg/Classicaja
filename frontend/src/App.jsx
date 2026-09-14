@@ -13,7 +13,9 @@ import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Boost from './pages/Boost';
 import Admin from './pages/Admin';
+import PlanChoice from './pages/PlanChoice';
 import { useAuth } from './main';
+import { api } from './lib/api';
 
 function Protected({children}) {
   const {user, loading} = useAuth();
@@ -45,11 +47,24 @@ function NavigateFallback(){
     <a className="primary" href="/entrar">Entrar com outra conta</a>
   </div>;
 }
+function PublishGate(){
+  const [state,setState]=React.useState({loading:true,ready:false});
+  React.useEffect(()=>{
+    let active=true;
+    api('/api/me/publish-plan')
+      .then(data=>{if(active)setState({loading:false,ready:Boolean(data?.ready)})})
+      .catch(()=>{if(active)setState({loading:false,ready:false})});
+    return()=>{active=false};
+  },[]);
+  if(state.loading) return <div className="loading">Verificando plano...</div>;
+  return state.ready ? <Publish/> : <Navigate to="/escolher-plano" replace/>;
+}
 export default function App(){
   return <div className="app"><Header/><main><Routes>
     <Route path="/" element={<Home/>}/>
     <Route path="/produto/:id" element={<Product/>}/>
-    <Route path="/publicar" element={<Protected><Publish/></Protected>}/>
+    <Route path="/escolher-plano" element={<Protected><PlanChoice/></Protected>}/>
+    <Route path="/publicar" element={<Protected><PublishGate/></Protected>}/>
     <Route path="/editar/:id" element={<Protected><EditProduct/></Protected>}/>
     <Route path="/painel" element={<Protected><Dashboard/></Protected>}/>
     <Route path="/meus-anuncios" element={<Protected><MyAds/></Protected>}/>

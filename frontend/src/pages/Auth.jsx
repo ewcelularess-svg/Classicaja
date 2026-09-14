@@ -19,7 +19,7 @@ export default function Auth(){
    try{
      const data=await api(`/api/auth/${mode==='login'?'login':'register'}`,{method:'POST',body:JSON.stringify(form)});
      login(data);
-     nav('/');
+     nav(mode==='register'?'/escolher-plano':'/');
    }catch(e){
      setErr(e.message)
    }finally{
