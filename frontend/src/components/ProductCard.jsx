@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {BadgeCheck, Heart, ImageOff, MapPin, Star, Tag} from 'lucide-react';
+import {BadgeCheck, Heart, ImageOff, MapPin, Star, Tag, Clock3} from 'lucide-react';
 import {Link, useNavigate} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import {useAuth} from '../main';
@@ -14,6 +14,8 @@ export default function ProductCard({p}){
   const promoActive = Boolean(p.promo_active || (p.original_price && Number(p.original_price) > Number(p.price)));
   const mainImage = (p.images && p.images[0]) || p.image_url;
   const isRecent = (()=>{ try{return Date.now()-new Date(p.created_at).getTime() < 24*60*60*1000}catch{return false} })();
+  const compactLocation = [p.neighborhood, p.city, p.state].filter(Boolean).join(', ').replace(', ', ' • ');
+  const showCondition = p.condition && !String(p.condition).toLowerCase().includes('novo');
 
   async function toggleFavorite(e){
     e.preventDefault();
@@ -32,34 +34,33 @@ export default function ProductCard({p}){
     }
   }
 
-  return <article className="product-card product-card-premium">
+  return <article className="product-card product-card-premium product-card-clean">
     <Link to={`/produto/${p.id}`} className="product-card-link" aria-label={`Ver anúncio ${p.title}`}>
       <div className="product-image product-image-fit">
         {mainImage
           ? <img src={imageUrl(mainImage)} alt={p.title} loading="lazy"/>
           : <div className="placeholder"><ImageOff/><span>Sem foto</span></div>}
 
-        <div className="card-badges">
-          {isRecent&&<span className="badge recent-badge">Acabou de ser anunciado</span>}
-          {p.condition&&<span className="condition-badge">{p.condition}</span>}
+        <div className="card-badges card-badges-clean">
           {p.featured_active&&<span className="badge featured-badge"><Star size={12} fill="currentColor"/> Destaque</span>}
           {promoActive&&<span className="badge promo-badge"><Tag size={12}/> Promoção</span>}
+          {isRecent&&<span className="badge recent-badge"><Clock3 size={12}/> Recente</span>}
+          {showCondition&&<span className="condition-badge">{p.condition}</span>}
           {p.images && p.images.length > 1 && <span className="badge gallery-count">+{p.images.length} fotos</span>}
         </div>
       </div>
 
       <div className="product-body">
         <div className="price-block">
-          <span className="price-label">Preço</span>
           {promoActive && p.original_price ? <div className="old-price">de {money(p.original_price)}</div> : null}
           <div className="price price-strong">{money(p.price)}</div>
         </div>
         <div className="title">{p.title}</div>
-        <div className="meta"><MapPin size={14}/><span>{p.neighborhood?`${p.neighborhood}, `:''}{p.city} - {p.state}</span></div>
-        <div className="card-footer">
+        <div className="clean-meta-stack">
+          <div className="meta clean-meta"><MapPin size={14}/><span>{compactLocation || `${p.city||''}${p.state?` - ${p.state}`:''}`}</span></div>
           {p.seller?.verified
-            ? <div className="verified-mini"><BadgeCheck size={14}/> Vendedor verificado</div>
-            : <span className="local-sale">Anúncio local</span>}
+            ? <div className="verified-mini verified-inline"><BadgeCheck size={14}/> Vendedor verificado</div>
+            : <span className="local-sale local-inline">Anúncio local</span>}
         </div>
       </div>
     </Link>

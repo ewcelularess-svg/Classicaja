@@ -2602,3 +2602,224 @@ button{
   .notification-toast{right:12px;left:12px;top:72px;max-width:none}
   .feed-loader{min-height:64px;font-size:12px}
 }
+
+/* =========================================================
+   V2.15 — PIX REAL PAGBANK
+   ========================================================= */
+.pagbank-payment-box{
+  margin:20px 0;
+  padding:20px;
+  border:1px solid #dbe4ee;
+  border-radius:20px;
+  background:linear-gradient(180deg,#fff,#f8fbff);
+}
+.pagbank-payment-title{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  margin-bottom:16px;
+}
+.pagbank-payment-title>svg{width:34px;height:34px;color:#111827;flex:0 0 auto}
+.pagbank-payment-title div{display:grid;gap:4px}
+.pagbank-payment-title b{font-size:18px}
+.pagbank-payment-title span{font-size:13px;color:#64748b;line-height:1.45}
+.pagbank-payment-box label{display:grid;gap:7px;font-size:12px;font-weight:800;color:#374151}
+.pagbank-payment-box input{width:100%;max-width:420px;border:1px solid #cbd5e1;border-radius:12px;padding:12px 13px;background:#fff;outline:none}
+.pagbank-payment-box input:focus{border-color:#e11d48;box-shadow:0 0 0 3px rgba(225,29,72,.08)}
+.pagbank-checkout{max-width:620px;margin:22px auto;text-align:center}
+.pagbank-checkout.paid{border-color:#bbf7d0;background:#f0fdf4}
+.pagbank-qr-image{display:block;width:min(300px,80vw);height:auto;margin:18px auto;border:1px solid #e5e7eb;border-radius:18px;padding:10px;background:#fff}
+.pix-copy-area{display:grid;gap:10px;margin:14px 0}
+.pix-copy-area code{display:block;max-height:130px;overflow:auto;text-align:left;padding:12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;word-break:break-all;font-size:11px}
+.pix-copy-area .secondary-btn{justify-content:center}
+.pagbank-waiting{display:inline-flex;align-items:center;gap:9px;margin:10px 0;font-weight:800;color:#334155}
+.payment-pulse{width:10px;height:10px;border-radius:50%;background:#e11d48;box-shadow:0 0 0 0 rgba(225,29,72,.45);animation:paymentPulse 1.5s infinite}
+@keyframes paymentPulse{0%{box-shadow:0 0 0 0 rgba(225,29,72,.45)}70%{box-shadow:0 0 0 10px rgba(225,29,72,0)}100%{box-shadow:0 0 0 0 rgba(225,29,72,0)}}
+.renew-qr-image{width:190px;height:auto;object-fit:contain;border:1px solid #e5e7eb;border-radius:14px;background:#fff;padding:8px}
+@media(max-width:600px){
+  .pagbank-payment-box{padding:15px;border-radius:16px}
+  .pagbank-payment-title b{font-size:16px}
+  .pagbank-qr-image{width:min(260px,82vw)}
+  .quick-renew-body .renew-qr-image{width:170px}
+}
+.pix-live-note{display:flex;align-items:flex-start;gap:9px;margin:12px 0;padding:12px;border-radius:12px;background:#ecfdf5;border:1px solid #bbf7d0;color:#166534;font-size:12px;line-height:1.45}.pix-live-note svg{width:18px;height:18px;flex:0 0 auto}
+
+
+/* =========================================================
+   V2.14.5 — CARDS MAIS CLEAN E PROFISSIONAIS
+   ========================================================= */
+.product-card-clean{
+  border-radius:18px!important;
+  overflow:hidden!important;
+  border:1px solid #e7edf4!important;
+  box-shadow:0 10px 28px rgba(15,23,42,.06)!important;
+}
+.product-card-clean .product-card-link{
+  display:flex!important;
+  flex-direction:column!important;
+  height:100%!important;
+}
+.product-card-clean .product-image,
+.product-card-clean .product-image-fit{
+  height:205px!important;
+  background:#fff!important;
+  border-bottom:1px solid #eff3f8!important;
+}
+.product-card-clean .product-image img,
+.product-card-clean .product-image-fit img{
+  padding:8px!important;
+}
+.product-card-clean .product-body{
+  padding:14px!important;
+}
+.product-card-clean .price-block{
+  display:grid!important;
+  gap:3px!important;
+  margin-bottom:8px!important;
+}
+.product-card-clean .old-price{
+  font-size:11px!important;
+  font-weight:700!important;
+  color:#94a3b8!important;
+  margin:0!important;
+}
+.product-card-clean .price-strong{
+  font-size:26px!important;
+  font-weight:900!important;
+  letter-spacing:-.02em!important;
+  color:#0f172a!important;
+}
+.product-card-clean .title{
+  margin:0 0 10px!important;
+  min-height:44px!important;
+  font-size:15px!important;
+  line-height:1.42!important;
+  display:-webkit-box!important;
+  -webkit-line-clamp:2!important;
+  -webkit-box-orient:vertical!important;
+  overflow:hidden!important;
+}
+.product-card-clean .clean-meta-stack{
+  display:grid!important;
+  gap:7px!important;
+  margin-top:auto!important;
+}
+.product-card-clean .clean-meta,
+.product-card-clean .verified-inline,
+.product-card-clean .local-inline{
+  display:flex!important;
+  align-items:center!important;
+  gap:6px!important;
+  min-width:0!important;
+}
+.product-card-clean .clean-meta{
+  color:#64748b!important;
+  font-size:12px!important;
+}
+.product-card-clean .clean-meta span{
+  min-width:0!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+}
+.product-card-clean .verified-inline{
+  color:#2563eb!important;
+  font-size:11px!important;
+  font-weight:800!important;
+}
+.product-card-clean .local-inline{
+  color:#64748b!important;
+  font-size:11px!important;
+  font-weight:700!important;
+}
+.product-card-clean .card-badges-clean{
+  gap:6px!important;
+  align-items:flex-start!important;
+}
+.product-card-clean .card-badges-clean .badge,
+.product-card-clean .card-badges-clean .condition-badge{
+  min-height:24px!important;
+  padding:5px 9px!important;
+  font-size:10px!important;
+  font-weight:800!important;
+  border-radius:999px!important;
+  box-shadow:0 4px 14px rgba(15,23,42,.08)!important;
+}
+.product-card-clean .gallery-count{
+  background:#0f172a!important;
+  color:#fff!important;
+  border:none!important;
+}
+.product-card-clean .recent-badge{
+  background:#fff!important;
+  color:#334155!important;
+}
+.product-card-clean .heart{
+  width:40px!important;
+  height:40px!important;
+  top:10px!important;
+  right:10px!important;
+  background:rgba(255,255,255,.96)!important;
+}
+
+@media (min-width:761px){
+  .product-card-clean .local-inline,
+  .product-card-clean .verified-inline{
+    padding-top:8px!important;
+    border-top:1px solid #f1f5f9!important;
+  }
+}
+
+@media (max-width:760px){
+  .product-card-clean{
+    border-radius:16px!important;
+  }
+  .product-card-clean .product-image,
+  .product-card-clean .product-image-fit{
+    height:152px!important;
+  }
+  .product-card-clean .product-body{
+    padding:10px 10px 12px!important;
+  }
+  .product-card-clean .price-strong{
+    font-size:17px!important;
+  }
+  .product-card-clean .title{
+    font-size:12.5px!important;
+    min-height:34px!important;
+    margin-bottom:8px!important;
+  }
+  .product-card-clean .clean-meta{
+    font-size:10px!important;
+  }
+  .product-card-clean .verified-inline,
+  .product-card-clean .local-inline{
+    font-size:9.5px!important;
+  }
+  .product-card-clean .verified-inline svg,
+  .product-card-clean .local-inline svg,
+  .product-card-clean .clean-meta svg{
+    width:12px!important;
+    height:12px!important;
+  }
+  .product-card-clean .card-badges-clean .badge,
+  .product-card-clean .card-badges-clean .condition-badge{
+    min-height:22px!important;
+    padding:4px 7px!important;
+    font-size:8.5px!important;
+  }
+  .product-card-clean .recent-badge,
+  .product-card-clean .gallery-count{
+    display:none!important;
+  }
+}
+
+@media (max-width:520px){
+  .product-card-clean .verified-inline,
+  .product-card-clean .local-inline{
+    justify-content:flex-start!important;
+  }
+  .product-card-clean .clean-meta-stack{
+    gap:5px!important;
+  }
+}
