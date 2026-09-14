@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import {Link, NavLink, useNavigate} from 'react-router-dom';
 import {useAuth} from '../main';
+import NotificationsMenu from './NotificationsMenu';
 
 export default function Header(){
   const {user, logout}=useAuth();
@@ -46,6 +47,7 @@ export default function Header(){
       </form>
 
       <div className="header-actions premium-actions">
+        {user&&<NotificationsMenu/>}
         {user&&<Link className="header-action" title="Mensagens" to="/mensagens"><MessageCircle/><span>Mensagens</span></Link>}
         <Link className="header-action" title="Favoritos" to="/favoritos"><Heart/><span>Favoritos</span></Link>
         {user ? <>

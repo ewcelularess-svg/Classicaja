@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Check, ChevronRight, MapPin, Search, ShieldCheck, Sparkles, Tag, Users, X} from 'lucide-react';
 import {Link, useSearchParams} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
@@ -38,8 +38,13 @@ export default function Home(){
  const [sort,setSort]=useState('newest');
  const [city,setCity]=useState(searchParams.get('city')||'');
  const [neighborhood,setNeighborhood]=useState(searchParams.get('neighborhood')||'');
+ const [offset,setOffset]=useState(0);
+ const [hasMore,setHasMore]=useState(true);
+ const [loadingProducts,setLoadingProducts]=useState(false);
+ const feedEndRef=useRef(null);
+ const PAGE_SIZE=12;
 
- const load=()=>api(`/api/products?search=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&city=${encodeURIComponent(city)}&neighborhood=${encodeURIComponent(neighborhood)}&sort=${sort}`).then(setProducts).catch(()=>setProducts([]));
+ const productsUrl=(start=0)=>`/api/products?search=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&city=${encodeURIComponent(city)}&neighborhood=${encodeURIComponent(neighborhood)}&sort=${sort}&limit=${PAGE_SIZE}&offset=${start}`;
 
  useEffect(()=>{
    api('/api/categories').then(setCategories);
@@ -55,7 +60,45 @@ export default function Home(){
    setQ(nextQ); setCity(nextCity); setNeighborhood(nextNeighborhood); setCat(nextCategory);
  },[searchParams]);
 
- useEffect(()=>{const t=setTimeout(load,250); return ()=>clearTimeout(t)},[q,cat,sort,city,neighborhood]);
+ useEffect(()=>{
+   let active=true;
+   const t=setTimeout(async()=>{
+     setLoadingProducts(true);
+     try{
+       const data=await api(productsUrl(0));
+       if(!active) return;
+       setProducts(data||[]);
+       setOffset((data||[]).length);
+       setHasMore((data||[]).length===PAGE_SIZE);
+     }catch{
+       if(active){setProducts([]);setOffset(0);setHasMore(false)}
+     }finally{if(active)setLoadingProducts(false)}
+   },250);
+   return()=>{active=false;clearTimeout(t)};
+ },[q,cat,sort,city,neighborhood]);
+
+ async function loadMore(){
+   if(loadingProducts||!hasMore) return;
+   setLoadingProducts(true);
+   try{
+     const data=await api(productsUrl(offset));
+     const next=data||[];
+     setProducts(prev=>{
+       const seen=new Set(prev.map(x=>x.id));
+       return [...prev,...next.filter(x=>!seen.has(x.id))];
+     });
+     setOffset(prev=>prev+next.length);
+     setHasMore(next.length===PAGE_SIZE);
+   }catch{setHasMore(false)}finally{setLoadingProducts(false)}
+ }
+
+ useEffect(()=>{
+   const node=feedEndRef.current;
+   if(!node||!hasMore) return;
+   const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting) loadMore()},{rootMargin:'500px 0px'});
+   observer.observe(node);
+   return()=>observer.disconnect();
+ },[offset,hasMore,loadingProducts,q,cat,sort,city,neighborhood]);
 
  function submitSearch(e){
    e?.preventDefault?.();
@@ -193,8 +236,11 @@ export default function Home(){
     <div className="plans-highlight-note">Você ativa o plano logo após publicar o anúncio, sem complicação.</div>
   </section>}
 
-  <section className="section" id="produtos"><div className="section-head"><div><span className="section-kicker">CLASSIFICADOS</span><h2>Produtos</h2></div><select value={sort} onChange={e=>setSort(e.target.value)}><option value="newest">Mais recentes</option><option value="price_low">Menor preço</option><option value="price_high">Maior preço</option><option value="popular">Mais vistos</option></select></div>
-   {products.length ? <div className="product-grid">{products.map(p=><ProductCard key={p.id} p={p}/>)}</div> : <div className="empty"><div>🛍️</div><h3>Nenhum anúncio encontrado</h3><p>Altere os filtros ou publique o primeiro anúncio nesta região.</p></div>}
+  <section className="section infinite-feed-section" id="produtos"><div className="section-head"><div><span className="section-kicker">FEED DE ANÚNCIOS</span><h2>Produtos</h2></div><select value={sort} onChange={e=>setSort(e.target.value)}><option value="newest">Mais recentes</option><option value="price_low">Menor preço</option><option value="price_high">Maior preço</option><option value="popular">Mais vistos</option></select></div>
+   {products.length ? <>
+     <div className="product-grid infinite-product-grid">{products.map(p=><ProductCard key={p.id} p={p}/>)}</div>
+     <div ref={feedEndRef} className="feed-loader">{loadingProducts?<><span className="feed-spinner"/> Carregando mais anúncios...</>:hasMore?'Role para ver mais anúncios':'Você chegou ao fim dos anúncios.'}</div>
+   </> : loadingProducts ? <div className="feed-loader"><span className="feed-spinner"/> Carregando anúncios...</div> : <div className="empty"><div>🛍️</div><h3>Nenhum anúncio encontrado</h3><p>Altere os filtros ou publique o primeiro anúncio nesta região.</p></div>}
   </section>
  </>
 }

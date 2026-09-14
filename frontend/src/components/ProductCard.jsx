@@ -13,6 +13,7 @@ export default function ProductCard({p}){
   const [busy,setBusy]=useState(false);
   const promoActive = Boolean(p.promo_active || (p.original_price && Number(p.original_price) > Number(p.price)));
   const mainImage = (p.images && p.images[0]) || p.image_url;
+  const isRecent = (()=>{ try{return Date.now()-new Date(p.created_at).getTime() < 24*60*60*1000}catch{return false} })();
 
   async function toggleFavorite(e){
     e.preventDefault();
@@ -39,6 +40,7 @@ export default function ProductCard({p}){
           : <div className="placeholder"><ImageOff/><span>Sem foto</span></div>}
 
         <div className="card-badges">
+          {isRecent&&<span className="badge recent-badge">Acabou de ser anunciado</span>}
           {p.condition&&<span className="condition-badge">{p.condition}</span>}
           {p.featured_active&&<span className="badge featured-badge"><Star size={12} fill="currentColor"/> Destaque</span>}
           {promoActive&&<span className="badge promo-badge"><Tag size={12}/> Promoção</span>}

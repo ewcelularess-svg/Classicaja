@@ -2434,3 +2434,171 @@ button{
     min-height:34px!important;
   }
 }
+
+/* =========================================================
+   V2.14.4 — FEED INFINITO + SELO RECENTE + NOTIFICAÇÕES
+   ========================================================= */
+.recent-badge{
+  background:rgba(255,255,255,.96)!important;
+  color:#334155!important;
+  border:1px solid #e2e8f0!important;
+  box-shadow:0 4px 14px rgba(15,23,42,.08)!important;
+  font-weight:800!important;
+}
+.infinite-feed-section{padding-bottom:46px}
+.feed-loader{
+  min-height:76px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  color:#64748b;
+  font-size:13px;
+  font-weight:700;
+}
+.feed-spinner{
+  width:20px;
+  height:20px;
+  border:2px solid #e2e8f0;
+  border-top-color:var(--brand);
+  border-radius:50%;
+  animation:feedSpin .8s linear infinite;
+}
+@keyframes feedSpin{to{transform:rotate(360deg)}}
+
+.notifications-menu{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.notification-bell{
+  position:relative;
+  width:48px;
+  height:48px;
+  border:0;
+  background:transparent;
+  color:#1f2937;
+  border-radius:11px;
+  display:grid;
+  place-items:center;
+}
+.notification-bell:hover{background:#fff1f4;color:var(--brand)}
+.notification-bell svg{width:21px!important;height:21px!important}
+.notification-count{
+  position:absolute;
+  right:3px;
+  top:2px;
+  min-width:18px;
+  height:18px;
+  padding:0 5px;
+  border-radius:999px;
+  background:#e11d48;
+  color:#fff;
+  font-size:10px;
+  font-weight:900;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:2px solid #fff;
+}
+.notifications-dropdown{
+  position:absolute;
+  top:56px;
+  right:0;
+  width:min(390px,calc(100vw - 24px));
+  max-height:520px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  box-shadow:0 22px 60px rgba(15,23,42,.18);
+  overflow:hidden;
+  z-index:120;
+}
+.notifications-head{
+  padding:15px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-bottom:1px solid #eef2f7;
+}
+.notifications-head>div{display:grid;gap:2px}
+.notifications-head b{font-size:15px}
+.notifications-head small{font-size:11px;color:#64748b}
+.notifications-head button{
+  border:0;
+  background:#fff1f2;
+  color:#be123c;
+  border-radius:10px;
+  padding:8px 10px;
+  font-size:11px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+.notifications-head button svg{width:15px;height:15px}
+.notifications-list{max-height:430px;overflow:auto}
+.notification-item{
+  width:100%;
+  border:0;
+  border-bottom:1px solid #f1f5f9;
+  background:#fff;
+  padding:13px 15px;
+  display:flex;
+  align-items:flex-start;
+  gap:11px;
+  text-align:left;
+}
+.notification-item:hover{background:#f8fafc}
+.notification-item.unread{background:#fff7f9}
+.notification-icon{
+  width:36px;
+  height:36px;
+  border-radius:12px;
+  background:#fff1f2;
+  color:var(--brand);
+  display:grid;
+  place-items:center;
+  flex:0 0 36px;
+}
+.notification-icon svg{width:18px;height:18px}
+.notification-copy{display:grid;gap:3px;min-width:0}
+.notification-copy b{font-size:12px;color:#111827}
+.notification-copy small{font-size:11px;color:#475569;line-height:1.35}
+.notification-copy em{font-size:9px;color:#94a3b8;font-style:normal}
+.notifications-empty{padding:30px 18px;text-align:center;color:#64748b;font-size:12px}
+.notification-toast{
+  position:fixed;
+  right:22px;
+  top:92px;
+  z-index:150;
+  max-width:360px;
+  border:1px solid #fecdd3;
+  background:#fff;
+  box-shadow:0 18px 48px rgba(15,23,42,.18);
+  border-radius:16px;
+  padding:13px 15px;
+  display:flex;
+  align-items:center;
+  gap:11px;
+  color:#111827;
+  text-align:left;
+}
+.notification-toast>svg{color:var(--brand);flex:0 0 auto}
+.notification-toast span{display:grid;gap:2px}
+.notification-toast b{font-size:13px}
+.notification-toast small{font-size:11px;color:#475569;line-height:1.35}
+
+@media(max-width:760px){
+  .product-card-premium .condition-badge{display:none!important}
+  .product-card-premium .recent-badge{
+    display:inline-flex!important;
+    max-width:125px!important;
+    overflow:hidden!important;
+    text-overflow:ellipsis!important;
+    white-space:nowrap!important;
+  }
+  .notification-bell{width:36px;height:36px}
+  .notification-bell svg{width:20px!important;height:20px!important}
+  .notification-count{right:-1px;top:-2px}
+  .notifications-dropdown{position:fixed;top:64px;right:12px;width:calc(100vw - 24px);max-height:70vh}
+  .notification-toast{right:12px;left:12px;top:72px;max-width:none}
+  .feed-loader{min-height:64px;font-size:12px}
+}

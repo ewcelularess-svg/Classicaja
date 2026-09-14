@@ -431,6 +431,23 @@ def init_db():
               FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
               FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
             );
+            CREATE TABLE IF NOT EXISTS notifications (
+              id TEXT PRIMARY KEY,
+              type TEXT NOT NULL,
+              product_id TEXT,
+              title TEXT NOT NULL,
+              body TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS notification_reads (
+              notification_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              read_at TEXT NOT NULL,
+              PRIMARY KEY(notification_id,user_id),
+              FOREIGN KEY(notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS plan_settings (
               code TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -902,7 +919,7 @@ def public_stats():
 
 
 @app.get("/api/products")
-def list_products(search: str = "", category: str = "", city: str = "", neighborhood: str = "", sort: str = "newest", limit: int = 50, user=Depends(optional_user)):
+def list_products(search: str = "", category: str = "", city: str = "", neighborhood: str = "", sort: str = "newest", limit: int = 50, offset: int = 0, user=Depends(optional_user)):
     where = ["status='active'"]
     args = []
     if search.strip():
@@ -927,7 +944,9 @@ def list_products(search: str = "", category: str = "", city: str = "", neighbor
     with conn() as db:
         cleanup_expired_features(db)
         db.commit()
-        rows = db.execute(f"SELECT * FROM products WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ?", (*args, min(limit, 100))).fetchall()
+        safe_limit = max(1, min(int(limit or 50), 100))
+        safe_offset = max(0, int(offset or 0))
+        rows = db.execute(f"SELECT * FROM products WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ? OFFSET ?", (*args, safe_limit, safe_offset)).fetchall()
         return [product_dict(db, r, user["id"] if user else None) for r in rows]
 
 
@@ -1044,10 +1063,15 @@ async def create_product(
     with conn() as db:
         if not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
             raise HTTPException(400, "Categoria inválida")
+        created_at = now_iso()
         db.execute(
             """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,created_at,updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", now_iso(), now_iso()),
+            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", created_at, created_at),
+        )
+        db.execute(
+            "INSERT INTO notifications(id,type,product_id,title,body,created_at) VALUES (?,?,?,?,?,?)",
+            (str(uuid.uuid4()), "new_product", pid, "Novo anúncio publicado", f"{title.strip()} • {city.strip()} - {state.strip().upper()}", created_at),
         )
         db.commit()
     return {"id": pid}
@@ -1296,6 +1320,70 @@ def my_dashboard(user=Depends(current_user)):
             "expiring_soon_count": sum(1 for item in featured_ads if item.get("expiring_soon")),
         },
     }
+
+
+@app.get("/api/me/notifications")
+def my_notifications(limit: int = 20, user=Depends(current_user)):
+    safe_limit = max(1, min(int(limit or 20), 50))
+    with conn() as db:
+        rows = db.execute(
+            """SELECT n.*, CASE WHEN r.notification_id IS NULL THEN 1 ELSE 0 END unread
+               FROM notifications n
+               LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.user_id=?
+               LEFT JOIN products p ON p.id=n.product_id
+               WHERE n.product_id IS NULL OR p.seller_id<>?
+               ORDER BY n.created_at DESC
+               LIMIT ?""",
+            (user["id"], user["id"], safe_limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/me/notifications/unread-count")
+def unread_notifications_count(user=Depends(current_user)):
+    with conn() as db:
+        row = db.execute(
+            """SELECT COUNT(*) n
+               FROM notifications n
+               LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.user_id=?
+               LEFT JOIN products p ON p.id=n.product_id
+               WHERE r.notification_id IS NULL AND (n.product_id IS NULL OR p.seller_id<>?)""",
+            (user["id"], user["id"]),
+        ).fetchone()
+    return {"count": row["n"] if row else 0}
+
+
+@app.post("/api/me/notifications/{notification_id}/read")
+def read_notification(notification_id: str, user=Depends(current_user)):
+    with conn() as db:
+        exists = db.execute("SELECT 1 FROM notifications WHERE id=?", (notification_id,)).fetchone()
+        if not exists:
+            raise HTTPException(404, "Notificação não encontrada")
+        db.execute(
+            "INSERT OR IGNORE INTO notification_reads(notification_id,user_id,read_at) VALUES (?,?,?)",
+            (notification_id, user["id"], now_iso()),
+        )
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/me/notifications/read-all")
+def read_all_notifications(user=Depends(current_user)):
+    with conn() as db:
+        rows = db.execute(
+            """SELECT n.id FROM notifications n
+               LEFT JOIN products p ON p.id=n.product_id
+               WHERE n.product_id IS NULL OR p.seller_id<>?""",
+            (user["id"],),
+        ).fetchall()
+        now = now_iso()
+        for row in rows:
+            db.execute(
+                "INSERT OR IGNORE INTO notification_reads(notification_id,user_id,read_at) VALUES (?,?,?)",
+                (row["id"], user["id"], now),
+            )
+        db.commit()
+    return {"ok": True}
 
 
 @app.post("/api/products/{product_id}/favorite")
