@@ -5,6 +5,7 @@ import BottomNav from './components/BottomNav';
 import Home from './pages/Home';
 import Product from './pages/Product';
 import Publish from './pages/Publish';
+import EditProduct from './pages/EditProduct';
 import Auth from './pages/Auth';
 import MyAds from './pages/MyAds';
 import Favorites from './pages/Favorites';
@@ -29,6 +30,7 @@ export default function App(){
     <Route path="/" element={<Home/>}/>
     <Route path="/produto/:id" element={<Product/>}/>
     <Route path="/publicar" element={<Protected><Publish/></Protected>}/>
+    <Route path="/editar/:id" element={<Protected><EditProduct/></Protected>}/>
     <Route path="/painel" element={<Protected><Dashboard/></Protected>}/>
     <Route path="/meus-anuncios" element={<Protected><MyAds/></Protected>}/>
     <Route path="/favoritos" element={<Protected><Favorites/></Protected>}/>

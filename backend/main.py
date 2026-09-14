@@ -680,6 +680,25 @@ def update_product(product_id: str, payload: dict, user=Depends(current_user)):
     return {"ok": True}
 
 
+@app.post("/api/products/{product_id}/image")
+async def replace_product_image(product_id: str, image: UploadFile = File(...), user=Depends(current_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Anúncio não encontrado")
+        if row["seller_id"] != user["id"] and user["role"] != "admin":
+            raise HTTPException(403, "Você não pode editar este anúncio")
+        old_image = row["image_url"]
+
+    image_url = await save_product_image(image)
+    with conn() as db:
+        db.execute("UPDATE products SET image_url=?,updated_at=? WHERE id=?", (image_url, now_iso(), product_id))
+        db.commit()
+    if old_image and old_image != image_url:
+        delete_product_image(old_image)
+    return {"ok": True, "image_url": image_url}
+
+
 @app.delete("/api/products/{product_id}")
 def delete_product(product_id: str, user=Depends(current_user)):
     with conn() as db:

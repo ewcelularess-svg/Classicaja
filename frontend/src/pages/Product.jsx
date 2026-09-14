@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {ArrowLeft, BadgeCheck, Flag, Heart, MapPin, MessageCircle, Share2, Star} from 'lucide-react';
+import {ArrowLeft, BadgeCheck, Flag, Heart, MapPin, MessageCircle, Pencil, Share2, Star} from 'lucide-react';
 import {Link, useNavigate, useParams} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import {useAuth} from '../main';
@@ -21,6 +21,7 @@ export default function Product(){
   <div className="gallery">{p.image_url?<img src={imageUrl(p.image_url)} alt={p.title}/>:<div className="product-placeholder">📦</div>}</div>
   <aside className="product-info"><div className="product-top-actions"><div className="pill-row"><span className="pill">{p.condition}</span>{p.featured_active&&<span className="pill gold"><Star size={13}/> Destaque</span>}</div><div><button onClick={share}><Share2/></button><button className={p.favorite?'fav-on':''} onClick={favorite}><Heart/></button></div></div>
    <h1>{p.title}</h1><div className="detail-price">{money(p.price)}</div><div className="location"><MapPin/> {p.neighborhood?`${p.neighborhood}, `:''}{p.city} - {p.state}</div>
+   {user?.id===p.seller_id&&<Link className="edit-product-btn" to={`/editar/${p.id}`}><Pencil/> Editar anúncio</Link>}
    {user?.id!==p.seller_id&&<button className="chat-primary" onClick={chat}><MessageCircle/> Conversar no chat</button>}
    <a className={`whatsapp ${!phone?'disabled':''}`} target="_blank" rel="noreferrer" href={wa}><MessageCircle/> Falar pelo WhatsApp</a>
    <div className="seller-box"><span>Vendido por</span><b className="seller-name">{p.seller?.name || 'Vendedor'} {p.seller?.verified&&<BadgeCheck className="verified-icon"/>}</b>{p.seller?.verified&&<small>Identidade verificada pela plataforma</small>}</div>
