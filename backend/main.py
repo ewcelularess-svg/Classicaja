@@ -44,7 +44,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.2.0")
+app = FastAPI(title="ClassificaJá API", version="2.2.1")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -81,7 +81,14 @@ class Database:
         return cur
 
     def executemany(self, sql: str, seq):
-        cur = self.raw.executemany(_pg_sql(sql) if USE_POSTGRES else sql, seq)
+        # sqlite3.Connection exposes executemany(), but psycopg 3 performs it on a cursor.
+        # Keep a single compatibility wrapper so the rest of the application can use
+        # the same database API in local SQLite and production PostgreSQL/Supabase.
+        if USE_POSTGRES:
+            cur = self.raw.cursor()
+            cur.executemany(_pg_sql(sql), [tuple(params) for params in seq])
+        else:
+            cur = self.raw.executemany(sql, seq)
         self.last_rowcount = cur.rowcount if getattr(cur, "rowcount", -1) is not None else 0
         return cur
 
