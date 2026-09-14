@@ -1772,3 +1772,13 @@ img,svg{max-width:100%}
   .quick-renew-body{display:grid;gap:8px}
   .featured-plan-actions .renew-btn{flex:1}
 }
+
+/* =========================================================
+   V2.12.1 — OCULTA COMPARAÇÃO DE PLANOS EM TABLET E MOBILE
+   ========================================================= */
+@media (max-width:1024px){
+  .plan-comparison-wrap,
+  .boost-comparison-wrap{
+    display:none!important;
+  }
+}
