@@ -45,7 +45,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.10.3")
+app = FastAPI(title="ClassificaJá API", version="2.13.0")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -348,6 +348,20 @@ def init_db():
               FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
               FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
             );
+            CREATE TABLE IF NOT EXISTS plan_settings (
+              code TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              amount REAL NOT NULL DEFAULT 0,
+              days INTEGER NOT NULL DEFAULT 0,
+              boost INTEGER NOT NULL DEFAULT 0,
+              free INTEGER NOT NULL DEFAULT 0,
+              active INTEGER NOT NULL DEFAULT 1,
+              badge TEXT,
+              tagline TEXT,
+              features_json TEXT,
+              limitations_json TEXT,
+              updated_at TEXT NOT NULL
+            );
             """
         )
         # Migrations for V1 installations.
@@ -381,6 +395,18 @@ def init_db():
             ("Outros", "outros", "📦"),
         ]
         db.executemany("INSERT OR IGNORE INTO categories(name,slug,icon) VALUES (?,?,?)", categories)
+
+        for code, plan in PLANS.items():
+            db.execute(
+                """INSERT OR IGNORE INTO plan_settings(code,name,amount,days,boost,free,active,badge,tagline,features_json,limitations_json,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    code, plan.get("name", code), float(plan.get("amount") or 0), int(plan.get("days") or 0),
+                    int(plan.get("boost") or 0), 1 if plan.get("free") else 0, 1, plan.get("badge", ""),
+                    plan.get("tagline", ""), json.dumps(plan.get("features", []), ensure_ascii=False),
+                    json.dumps(plan.get("limitations", []), ensure_ascii=False), now_iso(),
+                ),
+            )
 
         # Production admin comes from environment variables; demo data stays local-only by default.
         admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
@@ -472,6 +498,25 @@ class VerifyIn(BaseModel):
     verified: bool
 
 
+class AdminUserStatusIn(BaseModel):
+    status: str
+
+
+class AdminUserRoleIn(BaseModel):
+    role: str
+
+
+class AdminPlanIn(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    days: Optional[int] = None
+    active: Optional[bool] = None
+    badge: Optional[str] = None
+    tagline: Optional[str] = None
+    features: Optional[list[str]] = None
+    limitations: Optional[list[str]] = None
+
+
 PLANS = {
     "boost_7": {
         "name": "Plano Grátis",
@@ -538,6 +583,52 @@ def plan_meta_from_boost(boost_level: int | None):
     except Exception:
         boost = 0
     return PLAN_BY_BOOST.get(boost)
+
+
+def plan_row_to_dict(row):
+    data = dict(row)
+    def _loads(value):
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value) if isinstance(value, str) else value
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return {
+        "code": data["code"],
+        "name": data["name"],
+        "amount": float(data.get("amount") or 0),
+        "days": int(data.get("days") or 0),
+        "boost": int(data.get("boost") or 0),
+        "free": bool(data.get("free")),
+        "active": bool(data.get("active")),
+        "badge": data.get("badge") or "",
+        "tagline": data.get("tagline") or "",
+        "features": _loads(data.get("features_json")),
+        "limitations": _loads(data.get("limitations_json")),
+        "updated_at": data.get("updated_at"),
+    }
+
+
+def get_plan_catalog(db=None, include_inactive=False):
+    owns = db is None
+    ctx = conn() if owns else None
+    handle = ctx.__enter__() if owns else db
+    try:
+        where = "" if include_inactive else " WHERE active=1"
+        rows = handle.execute(f"SELECT * FROM plan_settings{where} ORDER BY boost ASC, amount ASC").fetchall()
+        if rows:
+            return [plan_row_to_dict(r) for r in rows]
+        return [{"code": code, "active": True, **plan} for code, plan in PLANS.items()]
+    finally:
+        if owns:
+            ctx.__exit__(None, None, None)
+
+
+def get_plan(code: str, db=None, include_inactive=False):
+    plans = get_plan_catalog(db, include_inactive=include_inactive)
+    return next((p for p in plans if p.get("code") == code), None)
 
 
 def create_session(db, user_id: str):
@@ -652,7 +743,7 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.10.3", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.13.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -1204,16 +1295,18 @@ def report_product(product_id: str, payload: ReportIn, user=Depends(current_user
 # Plans / payments -----------------------------------------------------------
 @app.get("/api/plans")
 def plans():
-    return [{"code": code, **plan} for code, plan in PLANS.items()]
+    with conn() as db:
+        return get_plan_catalog(db, include_inactive=False)
 
 
 @app.post("/api/payments")
 def create_payment(payload: PaymentIn, user=Depends(current_user)):
-    if payload.plan_code not in PLANS:
-        raise HTTPException(400, "Plano inválido")
     if payload.method not in {"pix", "card"}:
         raise HTTPException(400, "Forma de pagamento inválida")
-    plan = PLANS[payload.plan_code]
+    with conn() as db:
+        plan = get_plan(payload.plan_code, db, include_inactive=False)
+    if not plan:
+        raise HTTPException(400, "Plano inválido ou indisponível")
     if plan.get("free") or float(plan.get("amount") or 0) <= 0:
         return {
             "id": None,
@@ -1259,7 +1352,7 @@ def demo_confirm_payment(payment_id: str, user=Depends(current_user)):
             raise HTTPException(404, "Pagamento não encontrado")
         if order["status"] == "paid":
             return {"ok": True, "status": "paid"}
-        plan = PLANS.get(order["plan_code"])
+        plan = get_plan(order["plan_code"], db, include_inactive=True)
         # Preserve old paid Basic orders created before the free-plan migration.
         if order["plan_code"] == "boost_7" and float(order["amount"] or 0) > 0:
             plan = {"name": "Básico legado 7 dias", "amount": float(order["amount"]), "days": 7, "boost": 1}
@@ -1288,7 +1381,7 @@ def my_payments(user=Depends(current_user)):
         result = []
         for row in rows:
             data = dict(row)
-            plan = PLANS.get(data.get("plan_code"), {})
+            plan = get_plan(data.get("plan_code"), db, include_inactive=True) or {}
             product = None
             if data.get("product_id"):
                 product = db.execute("SELECT id,title FROM products WHERE id=?", (data["product_id"],)).fetchone()
@@ -1309,19 +1402,37 @@ def my_payments(user=Depends(current_user)):
 @app.get("/api/admin/stats")
 def admin_stats(user=Depends(admin_user)):
     with conn() as db:
-        users = db.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
-        products = db.execute("SELECT COUNT(*) n FROM products").fetchone()["n"]
-        active = db.execute("SELECT COUNT(*) n FROM products WHERE status='active'").fetchone()["n"]
-        reports = db.execute("SELECT COUNT(*) n FROM reports WHERE status='open'").fetchone()["n"]
-        revenue = db.execute("SELECT COALESCE(SUM(amount),0) n FROM payment_orders WHERE status='paid'").fetchone()["n"]
-        views = db.execute("SELECT COALESCE(SUM(views),0) n FROM products").fetchone()["n"]
-    return {"users": users, "products": products, "active_products": active, "open_reports": reports, "revenue": revenue, "views": views}
+        def n(sql, params=()):
+            row = db.execute(sql, params).fetchone()
+            return row["n"] if row else 0
+        stats = {
+            "users": n("SELECT COUNT(*) n FROM users"),
+            "active_users": n("SELECT COUNT(*) n FROM users WHERE status='active'"),
+            "blocked_users": n("SELECT COUNT(*) n FROM users WHERE status<>'active'"),
+            "admins": n("SELECT COUNT(*) n FROM users WHERE role='admin'"),
+            "products": n("SELECT COUNT(*) n FROM products"),
+            "active_products": n("SELECT COUNT(*) n FROM products WHERE status='active'"),
+            "paused_products": n("SELECT COUNT(*) n FROM products WHERE status='paused'"),
+            "rejected_products": n("SELECT COUNT(*) n FROM products WHERE status='rejected'"),
+            "sold_products": n("SELECT COUNT(*) n FROM products WHERE status='sold'"),
+            "open_reports": n("SELECT COUNT(*) n FROM reports WHERE status='open'"),
+            "revenue": n("SELECT COALESCE(SUM(amount),0) n FROM payment_orders WHERE status='paid'"),
+            "paid_payments": n("SELECT COUNT(*) n FROM payment_orders WHERE status='paid'"),
+            "pending_payments": n("SELECT COUNT(*) n FROM payment_orders WHERE status='pending'"),
+            "active_boosts": n("SELECT COUNT(*) n FROM products WHERE featured=1 AND featured_until IS NOT NULL AND featured_until>?", (now_iso(),)),
+            "views": n("SELECT COALESCE(SUM(views),0) n FROM products"),
+        }
+    return stats
 
 
 @app.get("/api/admin/products")
 def admin_products(user=Depends(admin_user)):
     with conn() as db:
-        rows = db.execute("SELECT * FROM products ORDER BY created_at DESC LIMIT 200").fetchall()
+        rows = db.execute(
+            """SELECT p.*, u.name seller_name, u.email seller_email
+               FROM products p LEFT JOIN users u ON u.id=p.seller_id
+               ORDER BY p.created_at DESC LIMIT 500"""
+        ).fetchall()
         return [product_dict(db, r, user["id"]) for r in rows]
 
 
@@ -1337,10 +1448,28 @@ def admin_product_status(product_id: str, payload: ModerationIn, user=Depends(ad
     return {"ok": True}
 
 
+@app.delete("/api/admin/products/{product_id}")
+def admin_delete_product(product_id: str, user=Depends(admin_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Anúncio não encontrado")
+        images = normalize_product_images(dict(row))
+        db.execute("DELETE FROM products WHERE id=?", (product_id,))
+        db.commit()
+    delete_product_images(images)
+    return {"ok": True}
+
+
 @app.get("/api/admin/users")
 def admin_users(user=Depends(admin_user)):
     with conn() as db:
-        rows = db.execute("SELECT id,name,email,phone,role,verified,status,created_at FROM users ORDER BY created_at DESC LIMIT 200").fetchall()
+        rows = db.execute(
+            """SELECT u.id,u.name,u.email,u.phone,u.role,u.verified,u.status,u.created_at,
+                      (SELECT COUNT(*) FROM products p WHERE p.seller_id=u.id) ad_count,
+                      (SELECT COALESCE(SUM(po.amount),0) FROM payment_orders po WHERE po.user_id=u.id AND po.status='paid') paid_total
+               FROM users u ORDER BY u.created_at DESC LIMIT 500"""
+        ).fetchall()
     return [{**dict(r), "verified": bool(r["verified"])} for r in rows]
 
 
@@ -1354,12 +1483,144 @@ def admin_verify_user(user_id: str, payload: VerifyIn, user=Depends(admin_user))
     return {"ok": True}
 
 
+@app.put("/api/admin/users/{user_id}/status")
+def admin_user_status(user_id: str, payload: AdminUserStatusIn, user=Depends(admin_user)):
+    if payload.status not in {"active", "blocked"}:
+        raise HTTPException(400, "Status inválido")
+    if user_id == user["id"] and payload.status != "active":
+        raise HTTPException(400, "Você não pode bloquear sua própria conta administrativa")
+    with conn() as db:
+        db.execute("UPDATE users SET status=? WHERE id=?", (payload.status, user_id))
+        if db.total_changes == 0:
+            raise HTTPException(404, "Usuário não encontrado")
+        if payload.status != "active":
+            db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        db.commit()
+    return {"ok": True}
+
+
+@app.put("/api/admin/users/{user_id}/role")
+def admin_user_role(user_id: str, payload: AdminUserRoleIn, user=Depends(admin_user)):
+    if payload.role not in {"user", "admin"}:
+        raise HTTPException(400, "Tipo de conta inválido")
+    if user_id == user["id"] and payload.role != "admin":
+        raise HTTPException(400, "Você não pode remover seu próprio acesso administrativo")
+    with conn() as db:
+        db.execute("UPDATE users SET role=? WHERE id=?", (payload.role, user_id))
+        if db.total_changes == 0:
+            raise HTTPException(404, "Usuário não encontrado")
+        db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: str, user=Depends(admin_user)):
+    if user_id == user["id"]:
+        raise HTTPException(400, "Você não pode excluir sua própria conta administrativa")
+    with conn() as db:
+        target = db.execute("SELECT id,role FROM users WHERE id=?", (user_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, "Usuário não encontrado")
+        rows = db.execute("SELECT * FROM products WHERE seller_id=?", (user_id,)).fetchall()
+        images = []
+        for row in rows:
+            images.extend(normalize_product_images(dict(row)))
+        db.execute("DELETE FROM users WHERE id=?", (user_id,))
+        db.commit()
+    delete_product_images(images)
+    return {"ok": True}
+
+
+@app.get("/api/admin/plans")
+def admin_plans(user=Depends(admin_user)):
+    with conn() as db:
+        return get_plan_catalog(db, include_inactive=True)
+
+
+@app.put("/api/admin/plans/{plan_code}")
+def admin_update_plan(plan_code: str, payload: AdminPlanIn, user=Depends(admin_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM plan_settings WHERE code=?", (plan_code,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Plano não encontrado")
+        current = plan_row_to_dict(row)
+        updates = {}
+        for key in ("name", "amount", "days", "active", "badge", "tagline", "features", "limitations"):
+            value = getattr(payload, key)
+            if value is not None:
+                updates[key] = value
+        if not updates:
+            return current
+        if "amount" in updates and float(updates["amount"]) < 0:
+            raise HTTPException(400, "Valor inválido")
+        if "days" in updates and int(updates["days"]) < 0:
+            raise HTTPException(400, "Duração inválida")
+        if current.get("free"):
+            updates["amount"] = 0.0
+            updates["days"] = 0
+        fields = []
+        values = []
+        mapping = {
+            "name": "name", "amount": "amount", "days": "days", "active": "active",
+            "badge": "badge", "tagline": "tagline", "features": "features_json", "limitations": "limitations_json",
+        }
+        for key, value in updates.items():
+            column = mapping[key]
+            if key in {"features", "limitations"}:
+                value = json.dumps(value, ensure_ascii=False)
+            elif key == "active":
+                value = 1 if value else 0
+            fields.append(f"{column}=?")
+            values.append(value)
+        fields.append("updated_at=?")
+        values.append(now_iso())
+        db.execute(f"UPDATE plan_settings SET {', '.join(fields)} WHERE code=?", (*values, plan_code))
+        db.commit()
+        row = db.execute("SELECT * FROM plan_settings WHERE code=?", (plan_code,)).fetchone()
+        return plan_row_to_dict(row)
+
+
+@app.get("/api/admin/payments")
+def admin_payments(user=Depends(admin_user)):
+    with conn() as db:
+        rows = db.execute(
+            """SELECT po.*, u.name user_name, u.email user_email, p.title product_title
+               FROM payment_orders po
+               LEFT JOIN users u ON u.id=po.user_id
+               LEFT JOIN products p ON p.id=po.product_id
+               ORDER BY po.created_at DESC LIMIT 500"""
+        ).fetchall()
+        result = []
+        for row in rows:
+            data = dict(row)
+            plan = get_plan(data.get("plan_code"), db, include_inactive=True) or {}
+            if data.get("plan_code") == "boost_7" and float(data.get("amount") or 0) > 0:
+                data["plan_name"] = "Básico legado 7 dias"
+            else:
+                data["plan_name"] = plan.get("name", data.get("plan_code"))
+            result.append(data)
+        return result
+
+
+@app.post("/api/admin/payments/{payment_id}/cancel")
+def admin_cancel_payment(payment_id: str, user=Depends(admin_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM payment_orders WHERE id=?", (payment_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Pagamento não encontrado")
+        if row["status"] != "pending":
+            raise HTTPException(400, "Somente pagamentos pendentes podem ser cancelados")
+        db.execute("UPDATE payment_orders SET status='cancelled' WHERE id=?", (payment_id,))
+        db.commit()
+    return {"ok": True}
+
+
 @app.get("/api/admin/reports")
 def admin_reports(user=Depends(admin_user)):
     with conn() as db:
         rows = db.execute("""SELECT r.*, p.title product_title, u.name reporter_name
                            FROM reports r JOIN products p ON p.id=r.product_id JOIN users u ON u.id=r.reporter_id
-                           ORDER BY r.created_at DESC LIMIT 200""").fetchall()
+                           ORDER BY r.created_at DESC LIMIT 500""").fetchall()
     return [dict(r) for r in rows]
 
 
