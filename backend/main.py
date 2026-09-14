@@ -362,6 +362,11 @@ def init_db():
         ensure_column(db, "products", "updated_at", "TEXT")
         ensure_column(db, "products", "image_urls", "TEXT")
         ensure_column(db, "products", "original_price", "REAL")
+        ensure_column(db, "payment_orders", "provider", "TEXT")
+        ensure_column(db, "payment_orders", "provider_payment_id", "TEXT")
+        ensure_column(db, "payment_orders", "installments", "INTEGER")
+        ensure_column(db, "payment_orders", "installment_source", "TEXT")
+        ensure_column(db, "payment_orders", "provider_payload", "TEXT")
 
         categories = [
             ("Veículos", "veiculos", "🚗"),
@@ -455,6 +460,10 @@ class PaymentIn(BaseModel):
     method: str = "pix"
 
 
+class RenewPlanIn(BaseModel):
+    method: str = "pix"
+
+
 class ModerationIn(BaseModel):
     status: str
 
@@ -507,6 +516,21 @@ PLANS = {
         ]
     },
 }
+
+
+PLAN_BY_BOOST = {
+    1: {"code": "boost_7", "name": "Básico", "days": 7},
+    2: {"code": "boost_15", "name": "Plus", "days": 15},
+    3: {"code": "boost_30", "name": "Premium", "days": 30},
+}
+
+
+def plan_meta_from_boost(boost_level: int | None):
+    try:
+        boost = int(boost_level or 0)
+    except Exception:
+        boost = 0
+    return PLAN_BY_BOOST.get(boost)
 
 
 def create_session(db, user_id: str):
@@ -1002,7 +1026,64 @@ def my_dashboard(user=Depends(current_user)):
                WHERE (c.buyer_id=? OR c.seller_id=?) AND m.sender_id<>? AND m.read_at IS NULL""",
             (user["id"], user["id"], user["id"]),
         ).fetchone()["n"]
-    return {"total": row["total"] or 0, "active": row["active"] or 0, "sold": row["sold"] or 0, "views": row["views"] or 0, "favorites_received": favs, "unread_messages": unread}
+        featured_rows = db.execute(
+            """SELECT id,title,price,featured_until,boost_level,status,image_url,city,state
+               FROM products
+               WHERE seller_id=? AND featured=1 AND featured_until IS NOT NULL AND featured_until>?
+               ORDER BY boost_level DESC, featured_until ASC""",
+            (user["id"], now_iso()),
+        ).fetchall()
+    featured_ads = []
+    highest_boost = 0
+    next_expiration = None
+    for r in featured_rows:
+        data = dict(r)
+        meta = plan_meta_from_boost(data.get("boost_level")) or {}
+        highest_boost = max(highest_boost, int(data.get("boost_level") or 0))
+        exp = data.get("featured_until")
+        if exp and (next_expiration is None or exp < next_expiration):
+            next_expiration = exp
+        days_left = None
+        expiring_soon = False
+        if exp:
+            try:
+                expires_dt = datetime.fromisoformat(exp)
+                delta = expires_dt - now_dt()
+                days_left = max(0, delta.days + (1 if delta.seconds > 0 else 0))
+                expiring_soon = delta <= timedelta(days=3)
+            except Exception:
+                pass
+        featured_ads.append({
+            "id": data["id"],
+            "title": data["title"],
+            "price": data["price"],
+            "image_url": data.get("image_url"),
+            "city": data.get("city"),
+            "state": data.get("state"),
+            "featured_until": exp,
+            "days_left": days_left,
+            "expiring_soon": expiring_soon,
+            "boost_level": data.get("boost_level") or 0,
+            "plan_name": meta.get("name"),
+            "plan_code": meta.get("code"),
+        })
+    current_meta = plan_meta_from_boost(highest_boost) or {"name": "Sem plano", "code": None}
+    return {
+        "total": row["total"] or 0,
+        "active": row["active"] or 0,
+        "sold": row["sold"] or 0,
+        "views": row["views"] or 0,
+        "favorites_received": favs,
+        "unread_messages": unread,
+        "plan_summary": {
+            "featured_count": len(featured_ads),
+            "current_plan_name": current_meta.get("name", "Sem plano"),
+            "current_plan_code": current_meta.get("code"),
+            "next_expiration": next_expiration,
+            "featured_ads": featured_ads,
+            "expiring_soon_count": sum(1 for item in featured_ads if item.get("expiring_soon")),
+        },
+    }
 
 
 @app.post("/api/products/{product_id}/favorite")
@@ -1132,9 +1213,22 @@ def create_payment(payload: PaymentIn, user=Depends(current_user)):
             if not p or p["seller_id"] != user["id"]:
                 raise HTTPException(403, "Anúncio inválido")
         oid = str(uuid.uuid4())
-        db.execute("INSERT INTO payment_orders(id,user_id,product_id,plan_code,amount,method,status,created_at) VALUES (?,?,?,?,?,?,?,?)", (oid, user["id"], payload.product_id, payload.plan_code, plan["amount"], payload.method, "pending", now_iso()))
+        installments = 1 if payload.method == "pix" else None
+        installment_source = "pix_single_payment" if payload.method == "pix" else "provider"
+        db.execute(
+            """INSERT INTO payment_orders(id,user_id,product_id,plan_code,amount,method,status,created_at,provider,installments,installment_source)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (oid, user["id"], payload.product_id, payload.plan_code, plan["amount"], payload.method, "pending", now_iso(), "demo", installments, installment_source),
+        )
         db.commit()
-    return {"id": oid, "status": "pending", "amount": plan["amount"], "method": payload.method, "checkout_mode": "demo", "pix_code": f"DEMO-PIX-{oid[:8].upper()}" if payload.method == "pix" else None}
+    return {
+        "id": oid, "status": "pending", "amount": plan["amount"], "method": payload.method,
+        "checkout_mode": "demo",
+        "pix_code": f"DEMO-PIX-{oid[:8].upper()}" if payload.method == "pix" else None,
+        "installments": installments,
+        "installment_source": installment_source,
+        "provider_installment_message": "Parcelas serão fornecidas pelo gateway/banco" if payload.method == "card" else "PIX à vista",
+    }
 
 
 @app.post("/api/payments/{payment_id}/demo-confirm")
@@ -1150,7 +1244,16 @@ def demo_confirm_payment(payment_id: str, user=Depends(current_user)):
         paid_at = now_iso()
         db.execute("UPDATE payment_orders SET status='paid',paid_at=? WHERE id=?", (paid_at, payment_id))
         if order["product_id"] and plan:
-            until = (now_dt() + timedelta(days=plan["days"])).isoformat()
+            product = db.execute("SELECT featured_until FROM products WHERE id=?", (order["product_id"],)).fetchone()
+            base_dt = now_dt()
+            if product and product["featured_until"]:
+                try:
+                    current_until = datetime.fromisoformat(product["featured_until"])
+                    if current_until > base_dt:
+                        base_dt = current_until
+                except Exception:
+                    pass
+            until = (base_dt + timedelta(days=plan["days"])).isoformat()
             db.execute("UPDATE products SET featured=1,featured_until=?,boost_level=?,updated_at=? WHERE id=?", (until, plan["boost"], now_iso(), order["product_id"]))
         db.commit()
     return {"ok": True, "status": "paid"}
@@ -1160,7 +1263,21 @@ def demo_confirm_payment(payment_id: str, user=Depends(current_user)):
 def my_payments(user=Depends(current_user)):
     with conn() as db:
         rows = db.execute("SELECT * FROM payment_orders WHERE user_id=? ORDER BY created_at DESC", (user["id"],)).fetchall()
-    return [dict(r) for r in rows]
+        result = []
+        for row in rows:
+            data = dict(row)
+            plan = PLANS.get(data.get("plan_code"), {})
+            product = None
+            if data.get("product_id"):
+                product = db.execute("SELECT id,title FROM products WHERE id=?", (data["product_id"],)).fetchone()
+            data["plan_name"] = plan.get("name", data.get("plan_code"))
+            data["product_title"] = product["title"] if product else "Anúncio removido"
+            data["installment_label"] = (
+                "1x (PIX)" if data.get("method") == "pix"
+                else (f"{data.get('installments')}x" if data.get("installments") else "Definido pelo gateway/banco")
+            )
+            result.append(data)
+    return result
 
 
 # Admin ----------------------------------------------------------------------

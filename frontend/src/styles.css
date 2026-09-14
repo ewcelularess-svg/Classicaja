@@ -1651,3 +1651,124 @@ img,svg{max-width:100%}
     font-size:8px!important;
   }
 }
+
+/* =========================================================
+   V2.11 — BLOCO DE PLANOS NO PAINEL DO USUÁRIO
+   ========================================================= */
+.section-desc{margin:6px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
+.small-head{margin-top:28px;margin-bottom:14px}
+.dashboard-plan-section{margin-top:26px}
+.dashboard-plan-summary{display:grid;grid-template-columns:1.3fr .9fr;gap:16px;align-items:stretch}
+.plan-summary-card{border:1px solid var(--line);background:#fff;border-radius:22px;padding:22px;box-shadow:0 10px 30px rgba(15,23,42,.04)}
+.plan-summary-card.current{background:linear-gradient(180deg,#fff,#fff7f8)}
+.plan-summary-top{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.summary-icon{width:54px;height:54px;border-radius:18px;background:#fff1f2;color:var(--brand);display:grid;place-items:center}
+.summary-icon svg{width:26px;height:26px}
+.plan-summary-top small{display:block;color:var(--muted);font-size:12px}
+.plan-summary-top h3{margin:3px 0 0;font-size:28px;line-height:1.1}
+.summary-points{display:grid;gap:10px;margin-bottom:16px}
+.summary-points span{font-size:14px;color:#334155}
+.summary-actions{display:flex;gap:10px;flex-wrap:wrap}
+.plan-mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;height:100%}
+.plan-mini-card{border:1px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:6px;min-height:118px}
+.plan-mini-card .mini-name{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+.plan-mini-card b{font-size:22px;line-height:1.1}
+.plan-mini-card small{color:var(--muted);font-size:12px;line-height:1.35}
+.plan-mini-card.basic{background:#f8fafc}
+.plan-mini-card.plus{background:#fff7ed;border-color:#fed7aa}
+.plan-mini-card.premium{background:#fff1f2;border-color:#fecdd3}
+.featured-plan-list{margin-top:16px;display:grid;gap:12px}
+.featured-plan-item{border:1px solid var(--line);background:#fff;border-radius:18px;padding:16px 18px;display:flex;justify-content:space-between;align-items:center;gap:14px}
+.featured-plan-item b{display:block;font-size:16px;margin-bottom:4px}
+.featured-plan-item small{color:var(--muted);font-size:12px}
+.featured-plan-actions{display:flex;gap:10px;flex-wrap:wrap}
+.danger-lite-btn{min-height:42px;padding:0 14px;border:1px solid #fecdd3;background:#fff1f2;color:#be123c;border-radius:12px;display:inline-flex;align-items:center;gap:8px;font-weight:700}
+.empty-plan-box{margin-top:16px;padding:26px}
+.empty-plan-box p{color:var(--muted);margin:6px 0 16px}
+@media(max-width:1100px){
+  .dashboard-plan-summary{grid-template-columns:1fr}
+}
+@media(max-width:900px){
+  .plan-mini-grid{grid-template-columns:1fr}
+  .featured-plan-item{flex-direction:column;align-items:flex-start}
+  .featured-plan-actions{width:100%}
+  .featured-plan-actions>*{flex:1;justify-content:center}
+}
+
+/* =========================================================
+   V2.12 — HISTÓRICO, VENCIMENTO E RENOVAÇÃO RÁPIDA
+   ========================================================= */
+.plan-expiry-alert{
+  margin:24px 0 0;
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:16px 18px;
+  border:1px solid #fbbf24;
+  background:linear-gradient(180deg,#fffbeb,#fff7ed);
+  color:#92400e;
+  border-radius:18px;
+}
+.plan-expiry-alert>svg{flex:0 0 auto;margin-top:2px}
+.plan-expiry-alert div{display:grid;gap:4px}
+.plan-expiry-alert b{font-size:15px}
+.plan-expiry-alert span{font-size:13px;line-height:1.5}
+.expiry-inline{display:inline-flex;align-items:center;gap:6px;color:#b45309!important;font-weight:700}
+.featured-plan-item.expiring{border-color:#fbbf24;background:#fffbeb}
+.renew-btn{
+  min-height:42px;
+  padding:0 14px;
+  border:1px solid #bbf7d0;
+  background:#f0fdf4;
+  color:#166534;
+  border-radius:12px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  font-weight:800;
+}
+.quick-renew-checkout{
+  margin-top:16px;
+  border:1px solid #fecdd3;
+  background:linear-gradient(180deg,#fff,#fff7f9);
+  border-radius:20px;
+  padding:18px;
+  display:grid;
+  gap:14px;
+}
+.quick-renew-checkout.paid{border-color:#bbf7d0;background:#f0fdf4}
+.quick-renew-title{display:flex;align-items:center;gap:12px}
+.quick-renew-title>svg{width:38px;height:38px;color:var(--brand)}
+.quick-renew-title div{display:grid;gap:4px}
+.quick-renew-title span{font-size:13px;color:var(--muted)}
+.quick-renew-body{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.quick-renew-body span{font-size:14px}
+.quick-renew-body code{display:block;width:100%;padding:12px;border-radius:12px;background:#f8fafc;word-break:break-all}
+.quick-renew-checkout small{color:var(--muted);line-height:1.5}
+.renew-success{display:inline-flex;align-items:center;gap:6px;color:#166534;font-weight:800}
+.payment-history-section{margin-top:34px;padding-top:22px;border-top:1px solid var(--line)}
+.payment-history-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
+.payment-history-table{width:100%;border-collapse:collapse;min-width:880px}
+.payment-history-table th,.payment-history-table td{padding:13px 14px;border-bottom:1px solid #eef1f4;text-align:left;font-size:12px;vertical-align:middle}
+.payment-history-table th{background:#f8fafc;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.payment-history-table tbody tr:last-child td{border-bottom:0}
+.payment-status{display:inline-flex;align-items:center;justify-content:center;min-width:72px;padding:6px 9px;border-radius:999px;font-weight:800;font-size:11px}
+.payment-status.paid{background:#f0fdf4;color:#166534}
+.payment-status.pending{background:#fffbeb;color:#92400e}
+.payment-status.failed,.payment-status.cancelled{background:#fff1f2;color:#be123c}
+.payment-empty{padding:26px}
+.provider-installment-note{
+  margin:-4px 0 18px;
+  padding:12px 14px;
+  border:1px solid #e2e8f0;
+  background:#f8fafc;
+  border-radius:12px;
+  color:#475569;
+  font-size:13px;
+  line-height:1.5;
+}
+@media(max-width:900px){
+  .quick-renew-body{display:grid;gap:8px}
+  .featured-plan-actions .renew-btn{flex:1}
+}
