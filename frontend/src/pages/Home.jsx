@@ -1,10 +1,30 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {ChevronRight, MapPin, Search, ShieldCheck, Sparkles, Tag, Users} from 'lucide-react';
+import {Check, ChevronRight, MapPin, Search, ShieldCheck, Sparkles, Tag, Users, X} from 'lucide-react';
 import {Link, useSearchParams} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import ProductCard from '../components/ProductCard';
 
 const money=(v)=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const rows = [
+  {label:'Selo de anúncio em destaque', values:[true,true,true]},
+  {label:'Prioridade nas buscas', values:['Básica','Maior','Máxima']},
+  {label:'Tempo em evidência', values:['7 dias','15 dias','30 dias']},
+  {label:'Melhor posição no catálogo', values:[false,true,true]},
+  {label:'Mais visualizações no catálogo', values:[false,false,true]},
+  {label:'Maior exposição entre anúncios', values:[false,false,true]},
+];
+
+function tierClass(index,total){
+  if(index===0) return 'basic';
+  if(index===total-1) return 'premium';
+  return 'plus';
+}
+
+function renderCell(value){
+  if(value===true) return <span className="table-yes"><Check size={15}/> Sim</span>;
+  if(value===false) return <span className="table-no"><X size={15}/> Não</span>;
+  return <span className="table-text">{value}</span>;
+}
 
 export default function Home(){
  const [searchParams,setSearchParams]=useSearchParams();
@@ -114,23 +134,55 @@ export default function Home(){
     <div className="plans-highlight-head">
       <div>
         <span className="section-kicker">PLANOS DE DESTAQUE</span>
-        <h2>Quanto maior o plano, mais vantagens você recebe</h2>
-        <p>O plano mais barato entrega o essencial. Os planos mais caros oferecem mais prioridade, mais tempo de exposição e mais visibilidade para vender rápido.</p>
+        <h2>Básico, Plus e Premium com níveis diferentes de vantagens</h2>
+        <p>O plano mais barato entrega o essencial. O plano do meio é o <b>mais vendido</b> e com <b>melhor custo-benefício</b>. O Premium oferece o máximo de exposição.</p>
       </div>
       <Link className="primary" to="/publicar">Publicar anúncio</Link>
     </div>
-    <div className="plans-highlight-grid">
-      {plans.map((plan, index)=><article key={plan.code} className={`plan-teaser-card ${index===plans.length-1?'recommended':''}`}>
-        {index===plans.length-1 && <span className="plan-ribbon">Mais vantagens</span>}
-        <span className="plan-mini-kicker">{plan.badge||plan.name}</span>
-        <h3>{plan.name}</h3>
-        <div className="plan-teaser-price">{money(plan.amount)}</div>
-        <p>{plan.tagline||'Destaque seu anúncio por mais tempo e aumente sua chance de venda.'}</p>
-        <ul>
-          {(plan.features||[]).map((feature)=><li key={feature}>{feature}</li>)}
-        </ul>
-        <Link className={`plan-cta ${index===plans.length-1?'active':''}`} to="/publicar">Quero este plano</Link>
-      </article>)}
+    <div className="plans-highlight-grid colorful-plans-grid">
+      {plans.map((plan, index)=>{
+        const tier=tierClass(index, plans.length);
+        return <article key={plan.code} className={`plan-teaser-card ${tier} ${index===plans.length-1?'recommended':''}`}>
+          <div className="plan-top-badges">
+            <span className="plan-mini-kicker">{tier==='basic'?'Básico':tier==='plus'?'Plus':'Premium'}</span>
+            {tier==='plus' && <span className="plan-chip sold">Mais vendido</span>}
+            {tier==='plus' && <span className="plan-chip value">Melhor custo-benefício</span>}
+            {tier==='premium' && <span className="plan-chip premium-chip">Mais vantagens</span>}
+          </div>
+          <h3>{plan.name}</h3>
+          <div className="plan-teaser-price">{money(plan.amount)}</div>
+          <p>{plan.tagline||'Destaque seu anúncio por mais tempo e aumente sua chance de venda.'}</p>
+          <ul>
+            {(plan.features||[]).map((feature)=><li key={feature}>{feature}</li>)}
+          </ul>
+          <Link className={`plan-cta ${tier==='plus' || tier==='premium'?'active':''}`} to="/publicar">Quero este plano</Link>
+        </article>
+      })}
+    </div>
+
+    <div className="plan-comparison-wrap">
+      <div className="comparison-head">
+        <h3>Comparação visual dos planos</h3>
+        <p>Veja rapidamente quais vantagens aumentam conforme o plano sobe.</p>
+      </div>
+      <div className="plan-comparison-table-wrap">
+        <table className="plan-comparison-table">
+          <thead>
+            <tr>
+              <th>Vantagens</th>
+              <th className="basic">Básico</th>
+              <th className="plus">Plus</th>
+              <th className="premium">Premium</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row)=><tr key={row.label}>
+              <td>{row.label}</td>
+              {row.values.map((value, i)=><td key={i}>{renderCell(value)}</td>)}
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
     </div>
     <div className="plans-highlight-note">Você ativa o plano logo após publicar o anúncio, sem complicação.</div>
   </section>}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import hashlib
 import os
 import secrets
@@ -44,7 +45,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.2.1")
+app = FastAPI(title="ClassificaJá API", version="2.9.0")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -243,6 +244,14 @@ def delete_product_image(image_url: str | None):
             local_path.unlink()
 
 
+def delete_product_images(image_urls):
+    seen = set()
+    for url in image_urls or []:
+        if url and url not in seen:
+            seen.add(url)
+            delete_product_image(url)
+
+
 def init_db():
     with conn() as db:
         db.executescript(
@@ -351,6 +360,8 @@ def init_db():
         ensure_column(db, "products", "featured_until", "TEXT")
         ensure_column(db, "products", "boost_level", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "products", "updated_at", "TEXT")
+        ensure_column(db, "products", "image_urls", "TEXT")
+        ensure_column(db, "products", "original_price", "REAL")
 
         categories = [
             ("Veículos", "veiculos", "🚗"),
@@ -551,6 +562,33 @@ def cleanup_expired_features(db):
     db.execute("UPDATE products SET featured=0,boost_level=0 WHERE featured_until IS NOT NULL AND featured_until<=?", (now_iso(),))
 
 
+def normalize_product_images(data):
+    urls = []
+    raw = data.get("image_urls")
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else list(raw)
+            if isinstance(parsed, list):
+                urls.extend([u for u in parsed if isinstance(u, str) and u.strip()])
+        except Exception:
+            pass
+    primary = data.get("image_url")
+    if primary and primary not in urls:
+        urls.insert(0, primary)
+    return urls[:8]
+
+
+def installment_info(price):
+    try:
+        value = float(price or 0)
+    except Exception:
+        value = 0
+    if value < 100:
+        return None
+    count = 12 if value >= 1200 else 10
+    return {"count": count, "amount": round(value / count, 2)}
+
+
 def product_dict(db, row, user_id: str | None = None):
     data = dict(row)
     seller = db.execute("SELECT id,name,phone,verified,created_at FROM users WHERE id=?", (data["seller_id"],)).fetchone()
@@ -568,12 +606,22 @@ def product_dict(db, row, user_id: str | None = None):
         except Exception:
             paid_featured = False
     data["featured_active"] = paid_featured if data.get("featured_until") else bool(data.get("featured"))
+    data["images"] = normalize_product_images(data)
+    if data["images"]:
+        data["image_url"] = data["images"][0]
+    try:
+        original = float(data.get("original_price")) if data.get("original_price") is not None else None
+    except Exception:
+        original = None
+    current = float(data.get("price") or 0)
+    data["promo_active"] = bool(original and original > current)
+    data["installments"] = installment_info(current)
     return data
 
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.2.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.9.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -678,21 +726,27 @@ def get_product(product_id: str, user=Depends(optional_user)):
 async def create_product(
     title: str = Form(...), description: str = Form(...), price: float = Form(...), category_slug: str = Form(...),
     city: str = Form(...), state: str = Form(...), neighborhood: str = Form(""), condition: str = Form("Usado"),
-    image: UploadFile | None = File(default=None), user=Depends(current_user),
+    original_price: float | None = Form(default=None), images: list[UploadFile] = File(default=[]), image: UploadFile | None = File(default=None), user=Depends(current_user),
 ):
     if price < 0:
         raise HTTPException(400, "Preço inválido")
-    image_url = None
+    gallery_files = [img for img in (images or []) if getattr(img, "filename", None)]
     if image and image.filename:
-        image_url = await save_product_image(image)
+        gallery_files.insert(0, image)
+    gallery_urls = []
+    for img in gallery_files[:8]:
+        gallery_urls.append(await save_product_image(img))
+    image_url = gallery_urls[0] if gallery_urls else None
+    if original_price is not None and original_price <= price:
+        original_price = None
     pid = str(uuid.uuid4())
     with conn() as db:
         if not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
             raise HTTPException(400, "Categoria inválida")
         db.execute(
-            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,status,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, "active", now_iso(), now_iso()),
+            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,status,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, "active", now_iso(), now_iso()),
         )
         db.commit()
     return {"id": pid}
@@ -700,7 +754,7 @@ async def create_product(
 
 @app.put("/api/products/{product_id}")
 def update_product(product_id: str, payload: dict, user=Depends(current_user)):
-    allowed = {"title", "description", "price", "category_slug", "city", "state", "neighborhood", "condition", "status"}
+    allowed = {"title", "description", "price", "category_slug", "city", "state", "neighborhood", "condition", "status", "original_price"}
     fields = [(k, payload[k]) for k in payload if k in allowed]
     if not fields:
         raise HTTPException(400, "Nenhum campo válido")
@@ -712,6 +766,11 @@ def update_product(product_id: str, payload: dict, user=Depends(current_user)):
             raise HTTPException(404, "Anúncio não encontrado")
         if row["seller_id"] != user["id"] and user["role"] != "admin":
             raise HTTPException(403, "Você não pode editar este anúncio")
+        payload_price = payload.get("price", row["price"])
+        if any(k == "original_price" for k, _ in fields):
+            original_price = payload.get("original_price")
+            if original_price is not None and original_price != "" and float(original_price) <= float(payload_price):
+                fields = [(k, (None if k == "original_price" else v)) for k, v in fields]
         fields.append(("updated_at", now_iso()))
         sql = ", ".join(f"{k}=?" for k, _ in fields)
         db.execute(f"UPDATE products SET {sql} WHERE id=?", (*[v for _, v in fields], product_id))
@@ -727,15 +786,109 @@ async def replace_product_image(product_id: str, image: UploadFile = File(...), 
             raise HTTPException(404, "Anúncio não encontrado")
         if row["seller_id"] != user["id"] and user["role"] != "admin":
             raise HTTPException(403, "Você não pode editar este anúncio")
-        old_image = row["image_url"]
+        old_images = normalize_product_images(dict(row))
 
     image_url = await save_product_image(image)
     with conn() as db:
-        db.execute("UPDATE products SET image_url=?,updated_at=? WHERE id=?", (image_url, now_iso(), product_id))
+        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (image_url, json.dumps([image_url]), now_iso(), product_id))
         db.commit()
-    if old_image and old_image != image_url:
-        delete_product_image(old_image)
-    return {"ok": True, "image_url": image_url}
+    delete_product_images(old_images)
+    return {"ok": True, "image_url": image_url, "images": [image_url]}
+
+
+@app.post("/api/products/{product_id}/gallery")
+async def replace_product_gallery(product_id: str, images: list[UploadFile] = File(...), user=Depends(current_user)):
+    files = [img for img in (images or []) if getattr(img, "filename", None)]
+    if not files:
+        raise HTTPException(400, "Envie pelo menos uma imagem")
+    with conn() as db:
+        row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Anúncio não encontrado")
+        if row["seller_id"] != user["id"] and user["role"] != "admin":
+            raise HTTPException(403, "Você não pode editar este anúncio")
+        old_images = normalize_product_images(dict(row))
+    gallery_urls = []
+    for img in files[:8]:
+        gallery_urls.append(await save_product_image(img))
+    with conn() as db:
+        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (gallery_urls[0], json.dumps(gallery_urls), now_iso(), product_id))
+        db.commit()
+    delete_product_images(old_images)
+    return {"ok": True, "image_url": gallery_urls[0], "images": gallery_urls}
+
+
+@app.post("/api/products/{product_id}/gallery/add")
+async def add_product_gallery_images(product_id: str, images: list[UploadFile] = File(...), user=Depends(current_user)):
+    files = [img for img in (images or []) if getattr(img, "filename", None)]
+    if not files:
+        raise HTTPException(400, "Envie pelo menos uma imagem")
+    with conn() as db:
+        row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Anúncio não encontrado")
+        if row["seller_id"] != user["id"] and user["role"] != "admin":
+            raise HTTPException(403, "Você não pode editar este anúncio")
+        gallery_urls = normalize_product_images(dict(row))
+    available = max(0, 8 - len(gallery_urls))
+    if available <= 0:
+        raise HTTPException(400, "A galeria já atingiu o limite de 8 imagens")
+    for img in files[:available]:
+        gallery_urls.append(await save_product_image(img))
+    with conn() as db:
+        primary = gallery_urls[0] if gallery_urls else None
+        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (primary, json.dumps(gallery_urls), now_iso(), product_id))
+        db.commit()
+    return {"ok": True, "image_url": gallery_urls[0], "images": gallery_urls}
+
+
+class GalleryOrderIn(BaseModel):
+    images: list[str]
+
+
+@app.put("/api/products/{product_id}/gallery/order")
+def reorder_product_gallery(product_id: str, payload: GalleryOrderIn, user=Depends(current_user)):
+    ordered = [u for u in payload.images if isinstance(u, str) and u.strip()]
+    with conn() as db:
+        row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Anúncio não encontrado")
+        if row["seller_id"] != user["id"] and user["role"] != "admin":
+            raise HTTPException(403, "Você não pode editar este anúncio")
+        current = normalize_product_images(dict(row))
+        current_set = set(current)
+        filtered = [u for u in ordered if u in current_set]
+        missing = [u for u in current if u not in filtered]
+        final_images = (filtered + missing)[:8]
+        primary = final_images[0] if final_images else None
+        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (primary, json.dumps(final_images), now_iso(), product_id))
+        db.commit()
+    return {"ok": True, "image_url": primary, "images": final_images}
+
+
+class GalleryRemoveIn(BaseModel):
+    image_url: str
+
+
+@app.delete("/api/products/{product_id}/gallery/image")
+def remove_product_gallery_image(product_id: str, payload: GalleryRemoveIn, user=Depends(current_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Anúncio não encontrado")
+        if row["seller_id"] != user["id"] and user["role"] != "admin":
+            raise HTTPException(403, "Você não pode editar este anúncio")
+        current = normalize_product_images(dict(row))
+        if payload.image_url not in current:
+            raise HTTPException(404, "Imagem não encontrada na galeria")
+        if len(current) <= 1:
+            raise HTTPException(400, "O anúncio precisa ter pelo menos uma imagem")
+        final_images = [u for u in current if u != payload.image_url]
+        primary = final_images[0] if final_images else None
+        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (primary, json.dumps(final_images), now_iso(), product_id))
+        db.commit()
+    delete_product_image(payload.image_url)
+    return {"ok": True, "image_url": primary, "images": final_images}
 
 
 @app.delete("/api/products/{product_id}")
@@ -746,7 +899,7 @@ def delete_product(product_id: str, user=Depends(current_user)):
             raise HTTPException(404, "Anúncio não encontrado")
         if row["seller_id"] != user["id"] and user["role"] != "admin":
             raise HTTPException(403, "Você não pode excluir este anúncio")
-        delete_product_image(row["image_url"])
+        delete_product_images(normalize_product_images(dict(row)))
         db.execute("DELETE FROM products WHERE id=?", (product_id,))
         db.commit()
     return {"ok": True}

@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {BadgeCheck, Heart, ImageOff, MapPin, Star} from 'lucide-react';
+import {BadgeCheck, Heart, ImageOff, MapPin, Star, Tag} from 'lucide-react';
 import {Link, useNavigate} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import {useAuth} from '../main';
@@ -11,6 +11,9 @@ export default function ProductCard({p}){
   const nav=useNavigate();
   const [favorite,setFavorite]=useState(Boolean(p.favorite));
   const [busy,setBusy]=useState(false);
+  const promoActive = Boolean(p.promo_active || (p.original_price && Number(p.original_price) > Number(p.price)));
+  const mainImage = (p.images && p.images[0]) || p.image_url;
+  const installment = p.installments && p.installments.amount ? p.installments : null;
 
   async function toggleFavorite(e){
     e.preventDefault();
@@ -32,20 +35,24 @@ export default function ProductCard({p}){
   return <article className="product-card product-card-premium">
     <Link to={`/produto/${p.id}`} className="product-card-link" aria-label={`Ver anúncio ${p.title}`}>
       <div className="product-image product-image-fit">
-        {p.image_url
-          ? <img src={imageUrl(p.image_url)} alt={p.title} loading="lazy"/>
+        {mainImage
+          ? <img src={imageUrl(mainImage)} alt={p.title} loading="lazy"/>
           : <div className="placeholder"><ImageOff/><span>Sem foto</span></div>}
 
         <div className="card-badges">
           {p.condition&&<span className="condition-badge">{p.condition}</span>}
           {p.featured_active&&<span className="badge featured-badge"><Star size={12} fill="currentColor"/> Destaque</span>}
+          {promoActive&&<span className="badge promo-badge"><Tag size={12}/> Promoção</span>}
+          {p.images && p.images.length > 1 && <span className="badge gallery-count">+{p.images.length} fotos</span>}
         </div>
       </div>
 
       <div className="product-body">
         <div className="price-block">
           <span className="price-label">Preço</span>
+          {promoActive && p.original_price ? <div className="old-price">de {money(p.original_price)}</div> : null}
           <div className="price price-strong">{money(p.price)}</div>
+          {installment && <div className="installment-text">em até {installment.count}x de {money(installment.amount)}</div>}
         </div>
         <div className="title">{p.title}</div>
         <div className="meta"><MapPin size={14}/><span>{p.neighborhood?`${p.neighborhood}, `:''}{p.city} - {p.state}</span></div>
