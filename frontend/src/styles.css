@@ -2147,3 +2147,7 @@ img,svg{max-width:100%}
 .master-access-email{padding:12px 14px;background:#f8fafc;border-radius:12px}
 .master-access-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
 @media(max-width:700px){.master-access-card{padding:26px 18px}.master-access-card h1{font-size:24px}.master-access-actions>*{width:100%;justify-content:center}}
+
+/* V2.13.2 — Master proprietário único */
+.master-role-badge{display:inline-flex;align-items:center;padding:7px 10px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:800;white-space:nowrap}
+.master-role-badge.owner{background:#111827;color:#fff}

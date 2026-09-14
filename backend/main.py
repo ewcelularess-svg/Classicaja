@@ -32,6 +32,7 @@ SUPABASE_SECRET_KEY = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_S
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "product-images").strip() or "product-images"
 USE_SUPABASE_STORAGE = bool(SUPABASE_URL and SUPABASE_SECRET_KEY)
 SEED_DEMO_DATA = os.getenv("SEED_DEMO_DATA", "false" if USE_POSTGRES else "true").lower() in {"1", "true", "yes", "sim"}
+MASTER_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
 
 try:
     import psycopg
@@ -409,21 +410,22 @@ def init_db():
             )
 
         # Production admin comes from environment variables; demo data stays local-only by default.
-        admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+        admin_email = MASTER_EMAIL
         admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
-        if admin_email and admin_password:
-            existing_admin = db.execute("SELECT * FROM users WHERE email=?", (admin_email,)).fetchone()
-            if not existing_admin:
+        if admin_email:
+            # Segurança de proprietário único: nenhuma outra conta pode manter role=admin.
+            db.execute("UPDATE users SET role='user' WHERE LOWER(email)<>? AND role='admin'", (admin_email,))
+            existing_admin = db.execute("SELECT * FROM users WHERE LOWER(email)=?", (admin_email,)).fetchone()
+            if not existing_admin and admin_password:
                 salt, pwhash = hash_password(admin_password)
                 db.execute(
                     "INSERT INTO users(id,name,email,phone,password_salt,password_hash,created_at,role,verified,status) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), os.getenv("ADMIN_NAME", "Administrador"), admin_email, os.getenv("ADMIN_PHONE", ""), salt, pwhash, now_iso(), "admin", 1, "active"),
                 )
-            else:
-                # Se o e-mail administrativo já existia como usuário comum,
-                # promove a mesma conta sem trocar a senha cadastrada pelo usuário.
+            elif existing_admin:
+                # Promove somente o e-mail proprietário e mantém a senha já cadastrada.
                 db.execute(
-                    "UPDATE users SET role='admin', verified=1, status='active' WHERE email=?",
+                    "UPDATE users SET role='admin', verified=1, status='active' WHERE LOWER(email)=?",
                     (admin_email,),
                 )
 
@@ -682,8 +684,10 @@ def optional_user(authorization: Optional[str] = Header(default=None)):
 
 
 def admin_user(user=Depends(current_user)):
-    if user["role"] != "admin":
-        raise HTTPException(403, "Acesso restrito ao administrador")
+    if not MASTER_EMAIL:
+        raise HTTPException(503, "Painel Master ainda não foi configurado no servidor")
+    if str(user.get("email") or "").strip().lower() != MASTER_EMAIL or user.get("role") != "admin":
+        raise HTTPException(403, "Acesso exclusivo do proprietário do ClassificaJá")
     return user
 
 
@@ -1495,8 +1499,13 @@ def admin_user_status(user_id: str, payload: AdminUserStatusIn, user=Depends(adm
     if payload.status not in {"active", "blocked"}:
         raise HTTPException(400, "Status inválido")
     if user_id == user["id"] and payload.status != "active":
-        raise HTTPException(400, "Você não pode bloquear sua própria conta administrativa")
+        raise HTTPException(400, "Você não pode bloquear sua própria conta Master")
     with conn() as db:
+        target = db.execute("SELECT id,email FROM users WHERE id=?", (user_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, "Usuário não encontrado")
+        if str(target["email"] or "").strip().lower() == MASTER_EMAIL and payload.status != "active":
+            raise HTTPException(400, "A conta Master não pode ser bloqueada")
         db.execute("UPDATE users SET status=? WHERE id=?", (payload.status, user_id))
         if db.total_changes == 0:
             raise HTTPException(404, "Usuário não encontrado")
@@ -1508,16 +1517,7 @@ def admin_user_status(user_id: str, payload: AdminUserStatusIn, user=Depends(adm
 
 @app.put("/api/admin/users/{user_id}/role")
 def admin_user_role(user_id: str, payload: AdminUserRoleIn, user=Depends(admin_user)):
-    if payload.role not in {"user", "admin"}:
-        raise HTTPException(400, "Tipo de conta inválido")
-    if user_id == user["id"] and payload.role != "admin":
-        raise HTTPException(400, "Você não pode remover seu próprio acesso administrativo")
-    with conn() as db:
-        db.execute("UPDATE users SET role=? WHERE id=?", (payload.role, user_id))
-        if db.total_changes == 0:
-            raise HTTPException(404, "Usuário não encontrado")
-        db.commit()
-    return {"ok": True}
+    raise HTTPException(403, "O ClassificaJá permite somente um Master. Não é permitido criar outro administrador.")
 
 
 @app.delete("/api/admin/users/{user_id}")
@@ -1525,9 +1525,11 @@ def admin_delete_user(user_id: str, user=Depends(admin_user)):
     if user_id == user["id"]:
         raise HTTPException(400, "Você não pode excluir sua própria conta administrativa")
     with conn() as db:
-        target = db.execute("SELECT id,role FROM users WHERE id=?", (user_id,)).fetchone()
+        target = db.execute("SELECT id,role,email FROM users WHERE id=?", (user_id,)).fetchone()
         if not target:
             raise HTTPException(404, "Usuário não encontrado")
+        if str(target["email"] or "").strip().lower() == MASTER_EMAIL:
+            raise HTTPException(400, "A conta Master não pode ser excluída")
         rows = db.execute("SELECT * FROM products WHERE seller_id=?", (user_id,)).fetchall()
         images = []
         for row in rows:
