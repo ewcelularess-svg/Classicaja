@@ -474,16 +474,19 @@ class VerifyIn(BaseModel):
 
 PLANS = {
     "boost_7": {
-        "name": "Destaque Básico 7 dias",
-        "amount": 19.90,
-        "days": 7,
-        "boost": 1,
-        "badge": "Entrada",
-        "tagline": "Plano econômico para começar a destacar seu anúncio.",
-        "features": [
-            "Selo de anúncio em destaque",
-            "Prioridade básica nas buscas",
-            "7 dias de visibilidade reforçada"
+        "name": "Plano Grátis",
+        "amount": 0.0,
+        "days": 0,
+        "boost": 0,
+        "free": True,
+        "badge": "Grátis",
+        "tagline": "Publique normalmente no marketplace, sem recursos de destaque.",
+        "features": [],
+        "limitations": [
+            "Sem selo de destaque",
+            "Sem prioridade nas buscas",
+            "Sem impulsionamento",
+            "Sem posição privilegiada no catálogo"
         ]
     },
     "boost_15": {
@@ -491,20 +494,23 @@ PLANS = {
         "amount": 34.90,
         "days": 15,
         "boost": 2,
-        "badge": "Intermediário",
-        "tagline": "Mais tempo no topo e mais força para vender rápido.",
+        "free": False,
+        "badge": "Mais vendido",
+        "tagline": "Mais visibilidade e melhor posição para acelerar a venda.",
         "features": [
-            "Tudo do plano Básico",
-            "Maior prioridade nas buscas",
-            "Mais tempo em evidência",
+            "Selo de anúncio em destaque",
+            "Prioridade maior nas buscas",
+            "15 dias em evidência",
             "Melhor posição no catálogo"
-        ]
+        ],
+        "limitations": []
     },
     "boost_30": {
         "name": "Destaque Premium 30 dias",
         "amount": 59.90,
         "days": 30,
         "boost": 3,
+        "free": False,
         "badge": "Mais completo",
         "tagline": "O máximo de visibilidade para vender com mais velocidade.",
         "features": [
@@ -513,13 +519,14 @@ PLANS = {
             "30 dias de destaque premium",
             "Mais visualizações no catálogo",
             "Maior exposição entre os anúncios"
-        ]
+        ],
+        "limitations": []
     },
 }
 
 
 PLAN_BY_BOOST = {
-    1: {"code": "boost_7", "name": "Básico", "days": 7},
+    1: {"code": "legacy_basic", "name": "Básico legado", "days": 7},
     2: {"code": "boost_15", "name": "Plus", "days": 15},
     3: {"code": "boost_30", "name": "Premium", "days": 30},
 }
@@ -1067,7 +1074,7 @@ def my_dashboard(user=Depends(current_user)):
             "plan_name": meta.get("name"),
             "plan_code": meta.get("code"),
         })
-    current_meta = plan_meta_from_boost(highest_boost) or {"name": "Sem plano", "code": None}
+    current_meta = plan_meta_from_boost(highest_boost) or {"name": "Grátis", "code": "boost_7"}
     return {
         "total": row["total"] or 0,
         "active": row["active"] or 0,
@@ -1077,7 +1084,7 @@ def my_dashboard(user=Depends(current_user)):
         "unread_messages": unread,
         "plan_summary": {
             "featured_count": len(featured_ads),
-            "current_plan_name": current_meta.get("name", "Sem plano"),
+            "current_plan_name": current_meta.get("name", "Grátis"),
             "current_plan_code": current_meta.get("code"),
             "next_expiration": next_expiration,
             "featured_ads": featured_ads,
@@ -1207,6 +1214,18 @@ def create_payment(payload: PaymentIn, user=Depends(current_user)):
     if payload.method not in {"pix", "card"}:
         raise HTTPException(400, "Forma de pagamento inválida")
     plan = PLANS[payload.plan_code]
+    if plan.get("free") or float(plan.get("amount") or 0) <= 0:
+        return {
+            "id": None,
+            "status": "free",
+            "amount": 0.0,
+            "method": None,
+            "checkout_mode": "free",
+            "pix_code": None,
+            "installments": None,
+            "installment_source": "none",
+            "provider_installment_message": "Plano gratuito sem cobrança",
+        }
     with conn() as db:
         if payload.product_id:
             p = db.execute("SELECT * FROM products WHERE id=?", (payload.product_id,)).fetchone()
@@ -1241,6 +1260,9 @@ def demo_confirm_payment(payment_id: str, user=Depends(current_user)):
         if order["status"] == "paid":
             return {"ok": True, "status": "paid"}
         plan = PLANS.get(order["plan_code"])
+        # Preserve old paid Basic orders created before the free-plan migration.
+        if order["plan_code"] == "boost_7" and float(order["amount"] or 0) > 0:
+            plan = {"name": "Básico legado 7 dias", "amount": float(order["amount"]), "days": 7, "boost": 1}
         paid_at = now_iso()
         db.execute("UPDATE payment_orders SET status='paid',paid_at=? WHERE id=?", (paid_at, payment_id))
         if order["product_id"] and plan:
@@ -1270,7 +1292,10 @@ def my_payments(user=Depends(current_user)):
             product = None
             if data.get("product_id"):
                 product = db.execute("SELECT id,title FROM products WHERE id=?", (data["product_id"],)).fetchone()
-            data["plan_name"] = plan.get("name", data.get("plan_code"))
+            if data.get("plan_code") == "boost_7" and float(data.get("amount") or 0) > 0:
+                data["plan_name"] = "Básico legado 7 dias"
+            else:
+                data["plan_name"] = plan.get("name", data.get("plan_code"))
             data["product_title"] = product["title"] if product else "Anúncio removido"
             data["installment_label"] = (
                 "1x (PIX)" if data.get("method") == "pix"

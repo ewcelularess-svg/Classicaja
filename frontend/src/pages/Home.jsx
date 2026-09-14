@@ -6,9 +6,10 @@ import ProductCard from '../components/ProductCard';
 
 const money=(v)=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const rows = [
-  {label:'Selo de anúncio em destaque', values:[true,true,true]},
-  {label:'Prioridade nas buscas', values:['Básica','Maior','Máxima']},
-  {label:'Tempo em evidência', values:['7 dias','15 dias','30 dias']},
+  {label:'Publicação normal no marketplace', values:[true,true,true]},
+  {label:'Selo de anúncio em destaque', values:[false,true,true]},
+  {label:'Prioridade nas buscas', values:['Sem prioridade','Maior','Máxima']},
+  {label:'Tempo em evidência', values:['Sem destaque','15 dias','30 dias']},
   {label:'Melhor posição no catálogo', values:[false,true,true]},
   {label:'Mais visualizações no catálogo', values:[false,false,true]},
   {label:'Maior exposição entre anúncios', values:[false,false,true]},
@@ -136,8 +137,8 @@ export default function Home(){
     <div className="plans-highlight-head">
       <div>
         <span className="section-kicker">PLANOS DE DESTAQUE</span>
-        <h2>Básico, Plus e Premium com níveis diferentes de vantagens</h2>
-        <p>O plano mais barato entrega o essencial. O plano do meio é o <b>mais vendido</b> e com <b>melhor custo-benefício</b>. O Premium oferece o máximo de exposição.</p>
+        <h2>Grátis, Plus e Premium</h2>
+        <p>O plano <b>Grátis</b> mantém o anúncio publicado de forma normal, sem recursos de destaque. O <b>Plus</b> adiciona visibilidade e o <b>Premium</b> entrega o máximo de exposição.</p>
       </div>
       <Link className="primary" to="/publicar">Publicar anúncio</Link>
     </div>
@@ -146,18 +147,21 @@ export default function Home(){
         const tier=tierClass(index, plans.length);
         return <article key={plan.code} className={`plan-teaser-card ${tier} ${index===plans.length-1?'recommended':''}`}>
           <div className="plan-top-badges">
-            <span className="plan-mini-kicker">{tier==='basic'?'Básico':tier==='plus'?'Plus':'Premium'}</span>
+            <span className="plan-mini-kicker">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>
             {tier==='plus' && <span className="plan-chip sold">Mais vendido</span>}
             {tier==='plus' && <span className="plan-chip value">Melhor custo-benefício</span>}
             {tier==='premium' && <span className="plan-chip premium-chip">Mais vantagens</span>}
           </div>
           <h3>{plan.name}</h3>
-          <div className="plan-teaser-price">{money(plan.amount)}</div>
+          <div className="plan-teaser-price">{plan.free?'Grátis':money(plan.amount)}</div>
           <p>{plan.tagline||'Destaque seu anúncio por mais tempo e aumente sua chance de venda.'}</p>
-          <ul>
+          {(plan.features||[]).length>0 && <ul>
             {(plan.features||[]).map((feature)=><li key={feature}>{feature}</li>)}
-          </ul>
-          <Link className={`plan-cta ${tier==='plus' || tier==='premium'?'active':''}`} to="/publicar">Quero este plano</Link>
+          </ul>}
+          {(plan.limitations||[]).length>0 && <ul className="plan-limit-list">
+            {(plan.limitations||[]).map((item)=><li key={item}>{item}</li>)}
+          </ul>}
+          <Link className={`plan-cta ${tier==='plus' || tier==='premium'?'active':''}`} to="/publicar">{plan.free?'Publicar grátis':'Quero este plano'}</Link>
         </article>
       })}
     </div>
@@ -172,7 +176,7 @@ export default function Home(){
           <thead>
             <tr>
               <th>Vantagens</th>
-              <th className="basic">Básico</th>
+              <th className="basic">Grátis</th>
               <th className="plus">Plus</th>
               <th className="premium">Premium</th>
             </tr>

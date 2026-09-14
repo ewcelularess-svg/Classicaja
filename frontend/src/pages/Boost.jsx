@@ -1,12 +1,13 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {Check, CreditCard, Crown, QrCode, Sparkles, Zap, X} from 'lucide-react';
 import {Link,useParams} from 'react-router-dom';
 import {api} from '../lib/api';
 const money=v=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const rows = [
-  {label:'Selo de anúncio em destaque', values:[true,true,true]},
-  {label:'Prioridade nas buscas', values:['Básica','Maior','Máxima']},
-  {label:'Tempo em evidência', values:['7 dias','15 dias','30 dias']},
+  {label:'Publicação normal no marketplace', values:[true,true,true]},
+  {label:'Selo de anúncio em destaque', values:[false,true,true]},
+  {label:'Prioridade nas buscas', values:['Sem prioridade','Maior','Máxima']},
+  {label:'Tempo em evidência', values:['Sem destaque','15 dias','30 dias']},
   {label:'Melhor posição no catálogo', values:[false,true,true]},
   {label:'Mais visualizações no catálogo', values:[false,false,true]},
   {label:'Maior exposição entre anúncios', values:[false,false,true]},
@@ -38,14 +39,14 @@ export default function Boost(){
     <div>
       <span className="section-kicker">MONETIZAÇÃO</span>
       <h1>Impulsione seu anúncio</h1>
-      <p>Agora os planos seguem uma escada de vantagens: o Básico é enxuto, o Plus tem melhor custo-benefício e o Premium entrega o máximo de visibilidade.</p>
+      <p>O plano Grátis mantém seu anúncio publicado normalmente, mas sem prioridade ou destaque. Plus e Premium aumentam a exposição e a posição do anúncio.</p>
       <div className="boost-hero-benefits">
         <span><Zap size={16}/> Mais cliques</span>
         <span><Sparkles size={16}/> Mais destaque</span>
         <span><Crown size={16}/> Mais prioridade</span>
       </div>
     </div>
-    {p&&<div className="boost-product boost-product-premium"><Sparkles/><div><b>{p.title}</b><span>{p.featured_active?'Este anúncio já possui destaque ativo.':'Escolha um plano para aumentar a exposição do seu anúncio.'}</span></div></div>}
+    {p&&<div className="boost-product boost-product-premium"><Sparkles/><div><b>{p.title}</b><span>{p.featured_active?'Este anúncio já possui destaque ativo.':'Escolha Plus ou Premium para aumentar a exposição do anúncio.'}</span></div></div>}
   </div>
 
   {!order ? <>
@@ -54,9 +55,10 @@ export default function Boost(){
       <button className={method==='card'?'selected':''} onClick={()=>setMethod('card')}><CreditCard/> Cartão</button>
     </div>
     <div className="provider-installment-note">
+      <b>Forma de pagamento usada somente em Plus e Premium.</b>{' '}
       {method==='pix'
-        ? <><b>PIX:</b> pagamento à vista em 1x.</>
-        : <><b>Cartão:</b> as opções de parcelamento serão carregadas diretamente do gateway/banco quando a integração real estiver ativa.</>}
+        ? <>PIX é à vista em 1x.</>
+        : <>As opções de parcelamento serão carregadas diretamente do gateway/banco quando a integração real estiver ativa.</>}
     </div>
 
     <div className="plan-grid premium-plan-grid colorful-plans-grid">
@@ -64,17 +66,22 @@ export default function Boost(){
         const tier=tierClass(index, plans.length);
         return <div className={`plan-card ${tier} ${tier==='premium'?'plan-card-featured':''}`} key={plan.code}>
           <div className="plan-top-badges">
-            <span className="plan-name">{tier==='basic'?'Básico':tier==='plus'?'Plus':'Premium'}</span>
+            <span className="plan-name">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>
             {tier==='plus' && <span className="plan-chip sold">Mais vendido</span>}
             {tier==='plus' && <span className="plan-chip value">Melhor custo-benefício</span>}
             {tier==='premium' && <span className="plan-chip premium-chip">Mais vantagens</span>}
           </div>
-          <b>{money(plan.amount)}</b>
-          <p className="plan-copy">{plan.tagline||'Seu anúncio fica mais visível, com prioridade e selo especial.'}</p>
-          <ul>
+          <b>{plan.free?'Grátis':money(plan.amount)}</b>
+          <p className="plan-copy">{plan.tagline||'Escolha o nível de exposição do seu anúncio.'}</p>
+          {(plan.features||[]).length>0 && <ul>
             {(plan.features||[]).map((feature)=><li key={feature}><Check/> {feature}</li>)}
-          </ul>
-          <button className="primary wide" disabled={busy} onClick={()=>buy(plan.code)}>Escolher plano</button>
+          </ul>}
+          {(plan.limitations||[]).length>0 && <ul className="plan-limit-list">
+            {(plan.limitations||[]).map((item)=><li key={item}><X/> {item}</li>)}
+          </ul>}
+          {plan.free
+            ? <Link className="plan-free-btn wide" to={`/produto/${id}`}>Continuar no Grátis</Link>
+            : <button className="primary wide" disabled={busy} onClick={()=>buy(plan.code)}>Escolher plano</button>}
         </div>
       })}
     </div>
@@ -82,14 +89,14 @@ export default function Boost(){
     <div className="plan-comparison-wrap boost-comparison-wrap">
       <div className="comparison-head">
         <h3>Tabela de comparação</h3>
-        <p>Quanto mais alto o plano, mais recursos ele entrega.</p>
+        <p>O Grátis não recebe recursos de destaque. Plus e Premium aumentam a exposição.</p>
       </div>
       <div className="plan-comparison-table-wrap">
         <table className="plan-comparison-table">
           <thead>
             <tr>
-              <th>Vantagens</th>
-              <th className="basic">Básico</th>
+              <th>Recursos</th>
+              <th className="basic">Grátis</th>
               <th className="plus">Plus</th>
               <th className="premium">Premium</th>
             </tr>

@@ -1784,107 +1784,73 @@ img,svg{max-width:100%}
 }
 
 /* =========================================================
-   V2.12.2 — CORREÇÃO DO EDITOR DE ANÚNCIOS / GALERIA
+   V2.12.4 — PLANO GRÁTIS LIMITADO
    ========================================================= */
-.edit-page .gallery-manager{
-  overflow:hidden;
-}
-.edit-page .gallery-manager-grid{
+.plan-limit-list{
+  list-style:none!important;
+  padding:0!important;
+  margin:16px 0 22px!important;
   display:grid!important;
-  grid-template-columns:repeat(auto-fit,minmax(180px,220px))!important;
-  justify-content:start!important;
-  align-items:start!important;
-  gap:14px!important;
+  gap:10px!important;
 }
-.edit-page .gallery-manager-card{
-  width:100%!important;
-  min-width:0!important;
-  max-width:220px!important;
+.plan-limit-list li{
+  color:#94a3b8!important;
+  font-size:12px!important;
+  font-weight:700!important;
+  text-decoration:none!important;
   display:flex!important;
-  flex-direction:column!important;
-  overflow:hidden!important;
-  padding:8px!important;
-}
-.edit-page .gallery-manager-card img{
-  display:block!important;
-  width:100%!important;
-  height:155px!important;
-  object-fit:contain!important;
-  object-position:center!important;
-  background:#fff!important;
-  border-radius:13px!important;
-  padding:4px!important;
-}
-.edit-page .drag-chip,
-.edit-page .primary-chip{
-  left:14px!important;
-  right:auto!important;
-  bottom:auto!important;
-  max-width:calc(100% - 28px)!important;
-  white-space:nowrap!important;
-  overflow:hidden!important;
-  text-overflow:ellipsis!important;
-}
-.edit-page .drag-chip{
-  top:14px!important;
-}
-.edit-page .primary-chip{
-  top:48px!important;
-  background:rgba(255,241,242,.96)!important;
-  border:1px solid #fecdd3!important;
-}
-.edit-page .gallery-manager-actions{
-  position:static!important;
-  width:100%!important;
-  margin-top:10px!important;
-  display:grid!important;
-  grid-template-columns:1fr!important;
+  align-items:center!important;
   gap:7px!important;
 }
-.edit-page .gallery-manager-actions button{
-  width:100%!important;
-  min-width:0!important;
-  min-height:38px!important;
-  padding:8px 9px!important;
-  font-size:12px!important;
-  line-height:1.2!important;
-  white-space:normal!important;
-  text-align:center!important;
+.plan-limit-list li::before{
+  content:"×";
+  width:20px;
+  height:20px;
+  border-radius:50%;
+  background:#f1f5f9;
+  color:#64748b;
+  display:grid;
+  place-items:center;
+  font-size:13px;
+  font-weight:900;
 }
-.edit-page .gallery-add-box{
-  clear:both!important;
-  width:100%!important;
+.plan-limit-list li svg{
+  width:15px;
+  height:15px;
+  color:#94a3b8!important;
 }
-@media (max-width:700px){
-  .edit-page .gallery-manager-grid{
-    grid-template-columns:repeat(2,minmax(0,1fr))!important;
-  }
-  .edit-page .gallery-manager-card{
-    max-width:none!important;
-  }
-  .edit-page .gallery-manager-card img{
-    height:145px!important;
-  }
+.plan-free-btn{
+  min-height:48px;
+  border:1px solid #cbd5e1;
+  border-radius:14px;
+  background:#f8fafc;
+  color:#475569;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:800;
 }
-@media (max-width:480px){
-  .edit-page .gallery-manager{
-    padding:13px!important;
-  }
-  .edit-page .gallery-manager-grid{
-    grid-template-columns:1fr!important;
-  }
-  .edit-page .gallery-manager-card{
-    max-width:100%!important;
-  }
-  .edit-page .gallery-manager-card img{
-    height:210px!important;
-  }
-  .edit-page .gallery-add-box{
-    display:grid!important;
-    grid-template-columns:1fr!important;
-  }
-  .edit-page .gallery-add-input,
-  .edit-page .gallery-add-box .primary{
-    width:100%!important;
-  }
+.colorful-plans-grid .plan-card.basic,
+.colorful-plans-grid .plan-teaser-card.basic{
+  background:linear-gradient(180deg,#fff 0%,#f8fafc 100%)!important;
+  border-color:#dbe4f0!important;
+  box-shadow:none!important;
+}
+.colorful-plans-grid .plan-card.basic .plan-name,
+.colorful-plans-grid .plan-teaser-card.basic .plan-mini-kicker{
+  color:#64748b!important;
+}
+.colorful-plans-grid .plan-card.basic>b,
+.colorful-plans-grid .plan-teaser-card.basic .plan-teaser-price{
+  color:#334155!important;
+}
+.plan-teaser-card.basic .plan-cta{
+  background:#f1f5f9!important;
+  color:#64748b!important;
+  border:1px solid #cbd5e1;
+}
+.plan-teaser-card.basic .plan-cta:hover,
+.plan-free-btn:hover{
+  background:#e2e8f0!important;
+  color:#334155!important;
 }
