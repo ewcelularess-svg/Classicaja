@@ -102,7 +102,11 @@ export default function Dashboard(){
         </div>
         <div className="summary-actions">
           <Link className="secondary-btn" to="/meus-anuncios">Administrar plano</Link>
-          <Link className="primary" to={featuredAds[0]?`/destaque/${featuredAds[0].id}`:'/meus-anuncios'}><ArrowUpCircle/> Migrar para melhor</Link>
+          {summary.current_plan_code==='boost_30' && featuredAds[0] ?
+            <button className="primary" onClick={()=>quickRenew(featuredAds[0])} disabled={busyRenew===featuredAds[0].id}><RefreshCw/>{busyRenew===featuredAds[0].id?'Gerando...':'Renovar Premium'}</button>
+            : summary.current_plan_code ?
+              <Link className="primary" to={featuredAds[0]?`/destaque/${featuredAds[0].id}`:'/meus-anuncios'}><ArrowUpCircle/> Migrar para melhor</Link>
+              : <Link className="primary" to="/meus-anuncios"><Sparkles/> Escolher plano</Link>}
         </div>
       </div>
 
@@ -135,8 +139,8 @@ export default function Dashboard(){
           <small>{item.plan_name || 'Plano ativo'} • vence em {formatDate(item.featured_until)} {item.days_left!==null&&item.days_left!==undefined?`• ${item.days_left} dia(s) restante(s)`:''}</small>
         </div>
         <div className="featured-plan-actions">
-          <button className="renew-btn" onClick={()=>quickRenew(item)} disabled={busyRenew===item.id}><RefreshCw/>{busyRenew===item.id?'Gerando...':'Renovar 1 clique'}</button>
-          <Link className="secondary-btn" to={`/destaque/${item.id}`}><Sparkles/> Migrar</Link>
+          <button className="renew-btn" onClick={()=>quickRenew(item)} disabled={busyRenew===item.id}><RefreshCw/>{busyRenew===item.id?'Gerando...':item.plan_code==='boost_30'?'Renovar Premium':'Renovar 1 clique'}</button>
+          {item.plan_code!=='boost_30' && <Link className="secondary-btn" to={`/destaque/${item.id}`}><Sparkles/> Migrar</Link>}
           <button className="danger-lite-btn" onClick={()=>cancelFeature(item.id)} disabled={busyCancel===item.id}><XCircle/>{busyCancel===item.id?'Cancelando...':'Cancelar'}</button>
         </div>
       </div>)}
