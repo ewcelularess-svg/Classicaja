@@ -553,6 +553,11 @@ def init_db():
             selected_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS free_plan_usage (
+            user_id TEXT PRIMARY KEY,
+            product_id TEXT,
+            used_at TEXT NOT NULL
+        )""")
         for provider in PAYMENT_PROVIDER_DEFS:
             db.execute(
                 "INSERT OR IGNORE INTO payment_integrations(provider,enabled,is_default,mode,credentials_enc,updated_at) VALUES (?,?,?,?,?,?)",
@@ -561,6 +566,8 @@ def init_db():
         ensure_column(db, "products", "image_urls", "TEXT")
         ensure_column(db, "products", "original_price", "REAL")
         ensure_column(db, "products", "payment_mode", "TEXT NOT NULL DEFAULT 'cash'")
+        ensure_column(db, "products", "plan_code", "TEXT")
+        ensure_column(db, "products", "plan_expires_at", "TEXT")
         ensure_column(db, "payment_orders", "provider", "TEXT")
         ensure_column(db, "payment_orders", "provider_payment_id", "TEXT")
         ensure_column(db, "payment_orders", "installments", "INTEGER")
@@ -593,6 +600,40 @@ def init_db():
                     plan.get("tagline", ""), json.dumps(plan.get("features", []), ensure_ascii=False),
                     json.dumps(plan.get("limitations", []), ensure_ascii=False), now_iso(),
                 ),
+            )
+        # Regra comercial atual do Grátis: 1 anúncio por conta e 7 dias.
+        # Atualiza instalações antigas que ainda tinham duração 0.
+        db.execute(
+            """UPDATE plan_settings
+               SET days=7, amount=0, free=1, name=?, badge=?, tagline=?, features_json=?, limitations_json=?, updated_at=?
+               WHERE code='boost_7'""",
+            (
+                PLANS["boost_7"]["name"], PLANS["boost_7"]["badge"], PLANS["boost_7"]["tagline"],
+                json.dumps(PLANS["boost_7"]["features"], ensure_ascii=False),
+                json.dumps(PLANS["boost_7"]["limitations"], ensure_ascii=False), now_iso(),
+            ),
+        )
+
+        # Identifica anúncios antigos sem plano como anúncios gratuitos e aplica validade de 7 dias.
+        legacy_free_rows = db.execute(
+            """SELECT id,seller_id,created_at FROM products
+               WHERE (plan_code IS NULL OR plan_code='') AND COALESCE(boost_level,0)=0 AND featured_until IS NULL"""
+        ).fetchall()
+        for legacy in legacy_free_rows:
+            data = dict(legacy)
+            try:
+                created_dt = datetime.fromisoformat(data.get("created_at") or now_iso())
+            except Exception:
+                created_dt = now_dt()
+            expires_at = (created_dt + timedelta(days=7)).isoformat()
+            db.execute(
+                "UPDATE products SET plan_code='boost_7',plan_expires_at=? WHERE id=?",
+                (expires_at, data["id"]),
+            )
+            db.execute(
+                """INSERT INTO free_plan_usage(user_id,product_id,used_at) VALUES (?,?,?)
+                   ON CONFLICT(user_id) DO NOTHING""",
+                (data["seller_id"], data["id"], data.get("created_at") or now_iso()),
             )
 
         # Production admin comes from environment variables; demo data stays local-only by default.
@@ -678,6 +719,10 @@ def init_db():
                     limitations.append(limitation)
             else:
                 features.append(partner_benefits[plan_code])
+                if plan_code == "boost_30":
+                    slider_benefit = "Exibição no slider principal da página inicial"
+                    if slider_benefit not in features:
+                        features.append(slider_benefit)
             db.execute(
                 "UPDATE plan_settings SET features_json=?,limitations_json=?,updated_at=? WHERE code=?",
                 (json.dumps(features, ensure_ascii=False), json.dumps(limitations, ensure_ascii=False), now_iso(), plan_code),
@@ -778,13 +823,18 @@ PLANS = {
     "boost_7": {
         "name": "Plano Grátis",
         "amount": 0.0,
-        "days": 0,
+        "days": 7,
         "boost": 0,
         "free": True,
         "badge": "Grátis",
-        "tagline": "Publique normalmente no marketplace, sem recursos de destaque.",
-        "features": [],
+        "tagline": "1 anúncio gratuito por conta, disponível por 7 dias.",
+        "features": [
+            "1 anúncio gratuito por conta",
+            "7 dias de publicação"
+        ],
         "limitations": [
+            "Uso gratuito disponível uma única vez por conta",
+            "Após 7 dias o anúncio é pausado",
             "Sem selo de destaque",
             "Sem prioridade nas buscas",
             "Sem impulsionamento",
@@ -823,7 +873,8 @@ PLANS = {
             "30 dias de destaque premium",
             "Mais visualizações no catálogo",
             "Maior exposição entre os anúncios",
-            "Até 2 campanhas de parceria por mês com prioridade Premium"
+            "Até 2 campanhas de parceria por mês com prioridade Premium",
+            "Exibição no slider principal da página inicial"
         ],
         "limitations": []
     },
@@ -910,9 +961,11 @@ def set_publish_plan_access(db, user_id: str, plan_code: str, status: str = "rea
 def get_publish_plan_access(db, user_id: str):
     row = db.execute("SELECT * FROM publish_plan_access WHERE user_id=?", (user_id,)).fetchone()
     if not row:
-        return {"ready": False, "status": "none", "plan": None}
+        free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
+        return {"ready": False, "status": "none", "plan": None, "free_used": free_used, "free_available": not free_used}
     data = dict(row)
     plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+    free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
     return {
         "ready": data.get("status") == "ready" and bool(plan),
         "status": data.get("status") or "none",
@@ -920,6 +973,8 @@ def get_publish_plan_access(db, user_id: str):
         "payment_order_id": data.get("payment_order_id"),
         "product_id": data.get("product_id"),
         "selected_at": data.get("selected_at"),
+        "free_used": free_used,
+        "free_available": not free_used,
     }
 
 
@@ -976,6 +1031,12 @@ def admin_user(user=Depends(current_user)):
 
 def cleanup_expired_features(db):
     db.execute("UPDATE products SET featured=0,boost_level=0 WHERE featured_until IS NOT NULL AND featured_until<=?", (now_iso(),))
+    # Anúncios do plano gratuito ficam visíveis somente durante a validade do ciclo grátis.
+    db.execute(
+        """UPDATE products SET status='paused',updated_at=?
+           WHERE status='active' AND plan_code='boost_7' AND plan_expires_at IS NOT NULL AND plan_expires_at<=?""",
+        (now_iso(), now_iso()),
+    )
 
 
 def normalize_product_images(data):
@@ -1026,12 +1087,14 @@ def product_dict(db, row, user_id: str | None = None):
     data["payment_mode"] = mode
     data["accepts_installments"] = mode == "installments"
     data["payment_mode_label"] = "Parcelamento disponível" if mode == "installments" else "À vista"
+    data["free_plan"] = data.get("plan_code") == "boost_7"
+    data["plan_expires_at"] = data.get("plan_expires_at")
     return data
 
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.16.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.16.1", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -1286,14 +1349,25 @@ async def create_product(
         created_at = now_iso()
         boost_level = int(selected_plan.get("boost") or 0)
         is_featured = 1 if boost_level > 0 else 0
+        plan_days = max(0, int(selected_plan.get("days") or 0))
         featured_until = None
+        plan_expires_at = (now_dt() + timedelta(days=plan_days)).isoformat() if plan_days else None
         if is_featured:
-            featured_until = (now_dt() + timedelta(days=int(selected_plan.get("days") or 0))).isoformat()
+            featured_until = plan_expires_at
+        if selected_plan.get("code") == "boost_7":
+            if db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user["id"],)).fetchone():
+                raise HTTPException(403, "O Plano Grátis já foi utilizado nesta conta. Escolha Plus ou Premium.")
         db.execute(
-            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,featured,featured_until,boost_level,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", is_featured, featured_until, boost_level, created_at, created_at),
+            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,featured,featured_until,boost_level,plan_code,plan_expires_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", is_featured, featured_until, boost_level, selected_plan.get("code"), plan_expires_at, created_at, created_at),
         )
+        if selected_plan.get("code") == "boost_7":
+            db.execute(
+                """INSERT INTO free_plan_usage(user_id,product_id,used_at) VALUES (?,?,?)
+                   ON CONFLICT(user_id) DO NOTHING""",
+                (user["id"], pid, created_at),
+            )
         db.execute(
             "UPDATE publish_plan_access SET status='used',product_id=?,updated_at=? WHERE user_id=?",
             (pid, created_at, user["id"]),
@@ -1324,6 +1398,13 @@ def update_product(product_id: str, payload: dict, user=Depends(current_user)):
             raise HTTPException(404, "Anúncio não encontrado")
         if row["seller_id"] != user["id"] and user["role"] != "admin":
             raise HTTPException(403, "Você não pode editar este anúncio")
+        row_data = dict(row)
+        if payload.get("status") == "active" and row_data.get("plan_code") == "boost_7" and row_data.get("plan_expires_at"):
+            try:
+                if datetime.fromisoformat(row_data["plan_expires_at"]) <= now_dt() and user["role"] != "admin":
+                    raise HTTPException(403, "Seu anúncio grátis venceu. Faça upgrade para Plus ou Premium para reativá-lo.")
+            except ValueError:
+                pass
         payload_price = payload.get("price", row["price"])
         if any(k == "original_price" for k, _ in fields):
             original_price = payload.get("original_price")
@@ -1473,6 +1554,8 @@ def delete_product(product_id: str, user=Depends(current_user)):
 @app.get("/api/me/products")
 def my_products(user=Depends(current_user)):
     with conn() as db:
+        cleanup_expired_features(db)
+        db.commit()
         rows = db.execute("SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC", (user["id"],)).fetchall()
         return [product_dict(db, r, user["id"]) for r in rows]
 
@@ -1480,6 +1563,8 @@ def my_products(user=Depends(current_user)):
 @app.get("/api/me/dashboard")
 def my_dashboard(user=Depends(current_user)):
     with conn() as db:
+        cleanup_expired_features(db)
+        db.commit()
         row = db.execute(
             """SELECT COUNT(*) total,
                SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active,
@@ -1848,8 +1933,8 @@ def _activate_paid_order(db, order):
                 pass
         until = (base_dt + timedelta(days=int(plan.get("days") or 0))).isoformat()
         db.execute(
-            "UPDATE products SET featured=1,featured_until=?,boost_level=?,updated_at=? WHERE id=?",
-            (until, int(plan.get("boost") or 0), now_iso(), order_data["product_id"]),
+            "UPDATE products SET featured=1,featured_until=?,boost_level=?,plan_code=?,plan_expires_at=?,status='active',updated_at=? WHERE id=?",
+            (until, int(plan.get("boost") or 0), order_data.get("plan_code"), until, now_iso(), order_data["product_id"]),
         )
     elif plan:
         # Compra feita antes da publicação: libera uma nova publicação com este plano.
@@ -1973,13 +2058,15 @@ def create_payment(payload: PaymentIn, request: Request, user=Depends(current_us
         if not plan:
             raise HTTPException(400, "Plano inválido ou indisponível")
         if plan.get("free") or float(plan.get("amount") or 0) <= 0:
-            # Plano Grátis: libera a publicação imediatamente e não cria cobrança.
+            # Plano Grátis: cortesia de uso único por conta; não cria cobrança.
+            if db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user["id"],)).fetchone():
+                raise HTTPException(403, "O Plano Grátis já foi utilizado nesta conta. Escolha Plus ou Premium para publicar novamente.")
             set_publish_plan_access(db, user["id"], plan["code"], "ready", None, None)
             db.commit()
             return {
                 "id": None, "status": "free", "amount": 0.0, "method": None,
                 "checkout_mode": "free", "pix_code": None, "installments": None,
-                "installment_source": "none", "provider_installment_message": "Plano gratuito ativado sem cobrança",
+                "installment_source": "none", "provider_installment_message": "Plano grátis liberado por 7 dias, sem cobrança",
             }
         product = None
         if payload.product_id:

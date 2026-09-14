@@ -8,6 +8,8 @@ import PartnerAdSpot from '../components/PartnerAdSpot';
 const money=(v)=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const rows = [
   {label:'Publicação normal no marketplace', values:[true,true,true]},
+  {label:'Validade da publicação/plano', values:['7 dias','15 dias','30 dias']},
+  {label:'Limite do plano Grátis', values:['1 anúncio por conta','Sem limite de contratações','Sem limite de contratações']},
   {label:'Selo de anúncio em destaque', values:[false,true,true]},
   {label:'Prioridade nas buscas', values:['Sem prioridade','Maior','Máxima']},
   {label:'Tempo em evidência', values:['Sem destaque','15 dias','30 dias']},
@@ -15,6 +17,7 @@ const rows = [
   {label:'Mais visualizações no catálogo', values:[false,false,true]},
   {label:'Maior exposição entre anúncios', values:[false,false,true]},
   {label:'Vitrine de parceiros', values:['Não','Rotativa','Prioridade']},
+  {label:'Slider principal da Home', values:[false,false,true]},
 ];
 
 function tierClass(index,total){
@@ -126,7 +129,7 @@ export default function Home(){
  }
 
  const featured=useMemo(()=>products.filter(p=>p.featured_active).slice(0,4),[products]);
- const heroSlides=useMemo(()=>products.filter(p=>((p.images&&p.images[0])||p.image_url)).slice(0,6),[products]);
+ const heroSlides=useMemo(()=>products.filter(p=>p.featured_active && Number(p.boost_level||0)>=3 && ((p.images&&p.images[0])||p.image_url)).slice(0,6),[products]);
  const activeHeroSlide=heroSlides[heroSlide]||heroSlides[0]||null;
 
  useEffect(()=>{
@@ -189,7 +192,7 @@ export default function Home(){
             alt={activeHeroSlide.title}
           />
           <div className="hero-slide-overlay">
-            <small>{activeHeroSlide.featured_active?'DESTAQUE':'NOVO ANÚNCIO'}</small>
+            <small>PREMIUM</small>
             <h3>{activeHeroSlide.title}</h3>
             <strong>{money(activeHeroSlide.price)}</strong>
             <span><MapPin size={14}/>{activeHeroSlide.city}{activeHeroSlide.state?` - ${activeHeroSlide.state}`:''}</span>
@@ -206,7 +209,7 @@ export default function Home(){
       </div> : <div className="hero-slider-empty">
         <Sparkles/>
         <b>Seus anúncios ganham vida aqui.</b>
-        <span>Publique o primeiro produto para aparecer no slider.</span>
+        <span>Anúncios Premium ativos aparecem aqui.</span>
       </div>}
     </div>
   </section>
@@ -227,7 +230,7 @@ export default function Home(){
       <div>
         <span className="section-kicker">PLANOS DE DESTAQUE</span>
         <h2>Grátis, Plus e Premium</h2>
-        <p>O plano <b>Grátis</b> mantém o anúncio publicado de forma normal, sem recursos de destaque. O <b>Plus</b> adiciona visibilidade e o <b>Premium</b> entrega o máximo de exposição.</p>
+        <p>O plano <b>Grátis</b> é uma cortesia de <b>1 anúncio por conta durante 7 dias</b>. Depois disso, Plus e Premium oferecem mais tempo, visibilidade e benefícios comerciais.</p>
       </div>
       <Link className="primary" to="/publicar">Publicar anúncio</Link>
     </div>
@@ -250,7 +253,7 @@ export default function Home(){
           {(plan.limitations||[]).length>0 && <ul className="plan-limit-list">
             {(plan.limitations||[]).map((item)=><li key={item}>{item}</li>)}
           </ul>}
-          <Link className={`plan-cta ${tier==='plus' || tier==='premium'?'active':''}`} to="/publicar">{plan.free?'Publicar grátis':'Quero este plano'}</Link>
+          <Link className={`plan-cta ${tier==='plus' || tier==='premium'?'active':''}`} to="/escolher-plano">{plan.free?'Usar meu Grátis':'Quero este plano'}</Link>
         </article>
       })}
     </div>
@@ -279,7 +282,7 @@ export default function Home(){
         </table>
       </div>
     </div>
-    <div className="plans-highlight-note">Você ativa o plano logo após publicar o anúncio, sem complicação.</div>
+    <div className="plans-highlight-note">Escolha o plano antes de publicar. O Grátis pode ser usado uma única vez por conta e dura 7 dias.</div>
   </section>}
 
   <section className="section infinite-feed-section" id="produtos"><div className="section-head"><div><span className="section-kicker">FEED DE ANÚNCIOS</span><h2>Produtos</h2></div><select value={sort} onChange={e=>setSort(e.target.value)}><option value="newest">Mais recentes</option><option value="price_low">Menor preço</option><option value="price_high">Maior preço</option><option value="popular">Mais vistos</option></select></div>

@@ -83,7 +83,7 @@ export default function PlanChoice(){
       <div>
         <span className="section-kicker">ANTES DE PUBLICAR</span>
         <h1>Escolha como seu anúncio será publicado</h1>
-        <p>Todo anúncio precisa de um plano. O <b>Grátis não gera cobrança</b>. Plus e Premium são liberados depois da confirmação do PIX.</p>
+        <p>Todo anúncio precisa de um plano. O <b>Grátis libera 1 anúncio por conta por 7 dias</b> e não gera cobrança. Plus e Premium são liberados depois da confirmação do PIX.</p>
       </div>
       <div className="plan-choice-steps"><span><b>1</b> Escolha o plano</span><span><b>2</b> Pague somente se for Plus/Premium</span><span><b>3</b> Publique o anúncio</span></div>
     </div>
@@ -98,19 +98,21 @@ export default function PlanChoice(){
       <div className="plans-highlight-grid colorful-plans-grid plan-choice-grid">
         {plans.map((plan,index)=>{
           const tier=tierClass(index,plans.length);
-          return <article className={`plan-teaser-card ${tier} ${tier==='premium'?'recommended':''}`} key={plan.code}>
+          const freeLocked=Boolean(plan.free && access?.free_available===false);
+          return <article className={`plan-teaser-card ${tier} ${tier==='premium'?'recommended':''} ${freeLocked?'plan-locked':''}`} key={plan.code}>
             <div className="plan-top-badges">
               <span className="plan-mini-kicker">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>
               {tier==='plus'&&<span className="plan-chip sold">Mais vendido</span>}
               {tier==='premium'&&<span className="plan-chip premium-chip">Mais vantagens</span>}
+              {freeLocked&&<span className="plan-chip used-chip">Grátis já utilizado</span>}
             </div>
             <h3>{plan.name}</h3>
             <div className="plan-teaser-price">{plan.free?'R$ 0,00':money(plan.amount)}</div>
             <p>{plan.tagline}</p>
             {(plan.features||[]).length>0&&<ul>{plan.features.map(f=><li key={f}>{f}</li>)}</ul>}
             {(plan.limitations||[]).length>0&&<ul className="plan-limit-list">{plan.limitations.map(f=><li key={f}><X size={14}/> {f}</li>)}</ul>}
-            <button className={`plan-cta ${tier!=='basic'?'active':''}`} disabled={busy} onClick={()=>choosePlan(plan)}>
-              {busy?'Aguarde...':plan.free?'Escolher Grátis':'Gerar PIX e escolher'}
+            <button className={`plan-cta ${tier!=='basic'?'active':''}`} disabled={busy || freeLocked} onClick={()=>choosePlan(plan)}>
+              {busy?'Aguarde...':freeLocked?'Grátis já utilizado':plan.free?'Escolher Grátis':'Gerar PIX e escolher'}
             </button>
           </article>
         })}
