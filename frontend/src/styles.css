@@ -1422,3 +1422,232 @@ img,svg{max-width:100%}
   .gallery-manager-card img{height:170px}
   .gallery-new-preview{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* =========================================================
+   V2.10 — ZOOM, CARROSSEL AUTOMÁTICO E RELACIONADOS INTELIGENTES
+   ========================================================= */
+.carousel-gallery{
+  position:relative;
+  cursor:zoom-in;
+}
+.carousel-gallery>img{
+  user-select:none;
+}
+.carousel-arrow,
+.carousel-play,
+.zoom-button{
+  position:absolute;
+  z-index:4;
+  border:1px solid rgba(226,232,240,.95);
+  background:rgba(255,255,255,.94);
+  color:#111827;
+  box-shadow:0 8px 24px rgba(15,23,42,.10);
+  backdrop-filter:blur(8px);
+}
+.carousel-arrow{
+  top:50%;
+  transform:translateY(-50%);
+  width:44px;
+  height:44px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+}
+.carousel-arrow:hover{background:#fff;color:#e11d48}
+.carousel-prev{left:14px}
+.carousel-next{right:14px}
+.carousel-counter{
+  position:absolute;
+  right:16px;
+  bottom:16px;
+  z-index:4;
+  background:rgba(17,24,39,.78);
+  color:#fff;
+  padding:7px 10px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:800;
+}
+.carousel-play{
+  left:16px;
+  bottom:16px;
+  width:36px;
+  height:36px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+}
+.zoom-button{
+  top:16px;
+  right:16px;
+  min-height:38px;
+  padding:0 12px;
+  border-radius:999px;
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-weight:800;
+  cursor:pointer;
+}
+.image-lightbox{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  background:rgba(2,6,23,.94);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:34px;
+}
+.lightbox-image-wrap{
+  width:min(92vw,1250px);
+  height:min(88vh,900px);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position:relative;
+}
+.lightbox-image-wrap img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  background:transparent;
+}
+.lightbox-close{
+  position:absolute;
+  top:18px;
+  right:18px;
+  z-index:3;
+  width:44px;
+  height:44px;
+  border-radius:50%;
+  border:1px solid rgba(255,255,255,.22);
+  background:rgba(255,255,255,.12);
+  color:#fff;
+  display:grid;
+  place-items:center;
+}
+.lightbox-arrow{
+  position:absolute;
+  top:50%;
+  transform:translateY(-50%);
+  z-index:3;
+  width:52px;
+  height:52px;
+  border-radius:50%;
+  border:1px solid rgba(255,255,255,.22);
+  background:rgba(255,255,255,.12);
+  color:#fff;
+  display:grid;
+  place-items:center;
+}
+.lightbox-prev{left:20px}
+.lightbox-next{right:20px}
+.lightbox-counter{
+  position:absolute;
+  bottom:6px;
+  left:50%;
+  transform:translateX(-50%);
+  background:rgba(15,23,42,.72);
+  color:#fff;
+  border-radius:999px;
+  padding:8px 12px;
+  font-size:12px;
+  font-weight:800;
+}
+.related-subtitle{
+  margin:7px 0 0;
+  color:#64748b;
+  font-size:14px;
+}
+.related-products-section{
+  margin-top:44px;
+  padding-top:30px;
+  padding-bottom:18px;
+  border-top:1px solid #e5e7eb;
+}
+.related-products-grid{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+@media(max-width:1000px){
+  .related-products-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:700px){
+  .carousel-arrow{width:38px;height:38px}
+  .carousel-prev{left:8px}
+  .carousel-next{right:8px}
+  .zoom-button{top:10px;right:10px;font-size:12px;min-height:34px}
+  .carousel-counter{right:10px;bottom:10px}
+  .carousel-play{left:10px;bottom:10px;width:34px;height:34px}
+  .image-lightbox{padding:14px}
+  .lightbox-arrow{width:42px;height:42px}
+  .lightbox-prev{left:8px}
+  .lightbox-next{right:8px}
+  .lightbox-close{top:10px;right:10px;width:40px;height:40px}
+  .related-products-section{margin-top:28px;padding-top:22px}
+}
+@media(max-width:520px){
+  .related-products-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .zoom-button span{display:none}
+}
+
+/* =========================================================
+   V2.10.1 — CORREÇÃO DOS SELOS NOS CARDS
+   ========================================================= */
+.product-card-premium .card-badges{
+  position:absolute!important;
+  inset:auto!important;
+  top:10px!important;
+  left:10px!important;
+  right:52px!important;
+  bottom:auto!important;
+  z-index:4;
+  display:flex!important;
+  align-items:flex-start!important;
+  align-content:flex-start!important;
+  gap:6px!important;
+  flex-wrap:wrap!important;
+  max-width:calc(100% - 62px)!important;
+  pointer-events:none;
+}
+.product-card-premium .card-badges .condition-badge,
+.product-card-premium .card-badges .badge{
+  position:static!important;
+  top:auto!important;
+  right:auto!important;
+  bottom:auto!important;
+  left:auto!important;
+  min-height:26px;
+  width:auto!important;
+  max-width:100%;
+  padding:6px 9px!important;
+  border-radius:999px!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  white-space:nowrap;
+  line-height:1;
+}
+.product-card-premium .promo-badge{
+  background:#f97316!important;
+  color:#fff!important;
+}
+.product-card-premium .gallery-count{
+  background:#111827!important;
+  color:#fff!important;
+}
+@media (max-width:760px){
+  .product-card-premium .card-badges{
+    top:8px!important;
+    left:8px!important;
+    right:46px!important;
+    gap:4px!important;
+    max-width:calc(100% - 54px)!important;
+  }
+  .product-card-premium .card-badges .condition-badge,
+  .product-card-premium .card-badges .badge{
+    min-height:23px;
+    padding:5px 7px!important;
+    font-size:8px!important;
+  }
+}
