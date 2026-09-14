@@ -1,12 +1,11 @@
-import React,{useEffect,useMemo,useRef,useState} from 'react';
-import {ArrowLeft, GripVertical, ImagePlus, Save, Star, Trash2, UploadCloud} from 'lucide-react';
+import React,{useEffect,useMemo,useState} from 'react';
+import {ArrowLeft, GripVertical, Save, Star, Trash2, UploadCloud} from 'lucide-react';
 import {Link, useNavigate, useParams} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
 
 export default function EditProduct(){
  const {id}=useParams();
  const nav=useNavigate();
- const addInputRef=useRef(null);
  const [cats,setCats]=useState([]);
  const [form,setForm]=useState(null);
  const [gallery,setGallery]=useState([]);
@@ -30,7 +29,7 @@ export default function EditProduct(){
    }).catch(e=>setErr(e.message));
  },[id]);
 
- const remainingSlots = useMemo(()=>Math.max(0,8-gallery.length),[gallery.length]);
+ const remainingSlots = useMemo(()=>Math.max(0,8-gallery.length-newFiles.length),[gallery.length,newFiles.length]);
  const change=e=>setForm({...form,[e.target.name]:e.target.value});
 
  const submit=async e=>{
@@ -39,28 +38,31 @@ export default function EditProduct(){
    const payload={...form,price:Number(form.price),state:String(form.state||'').toUpperCase()};
    if(payload.original_price===''||payload.original_price===null) payload.original_price=null;
    else payload.original_price=Number(payload.original_price);
+
    await api(`/api/products/${id}`,{method:'PUT',body:JSON.stringify(payload)});
+
+   if(newFiles.length){
+    const fd=new FormData();
+    newFiles.forEach(file=>fd.append('images',file));
+    await api(`/api/products/${id}/gallery/add`,{method:'POST',body:fd});
+   }
+
    nav(`/produto/${id}`);
   }catch(e){setErr(e.message)}finally{setBusy(false)}
  };
 
  const onFiles=e=>{
-  const files=Array.from(e.target.files||[]).slice(0,remainingSlots);
+  const available=Math.max(0,8-gallery.length);
+  const files=Array.from(e.target.files||[]).slice(0,available);
+  newPreviews.forEach(src=>URL.revokeObjectURL(src));
   setNewFiles(files);
   setNewPreviews(files.map(f=>URL.createObjectURL(f)));
  };
 
- const uploadMoreImages=async()=>{
-  if(!newFiles.length) return;
-  setGalleryBusy(true); setErr('');
-  try{
-    const fd=new FormData();
-    newFiles.forEach(file=>fd.append('images',file));
-    const res=await api(`/api/products/${id}/gallery/add`,{method:'POST',body:fd});
-    setGallery(res.images||[]);
-    setNewFiles([]); setNewPreviews([]);
-    if(addInputRef.current) addInputRef.current.value='';
-  }catch(e){setErr(e.message)}finally{setGalleryBusy(false)}
+ const removePendingImage=index=>{
+  URL.revokeObjectURL(newPreviews[index]);
+  setNewFiles(files=>files.filter((_,i)=>i!==index));
+  setNewPreviews(previews=>previews.filter((_,i)=>i!==index));
  };
 
  const removeImage=async(img)=>{
@@ -100,15 +102,15 @@ export default function EditProduct(){
 
  return <div className="page publish-page edit-page">
   <Link className="back" to="/meus-anuncios"><ArrowLeft/> Voltar para meus anúncios</Link>
-  <div className="form-card"><div><span className="section-kicker">EDITAR CLASSIFICADO</span><h1>Editar anúncio</h1><p>Organize a galeria com drag-and-drop, remova fotos individuais e defina a principal.</p></div>
+  <div className="form-card"><div><span className="section-kicker">EDITAR CLASSIFICADO</span><h1>Editar anúncio</h1><p>Organize a galeria, selecione novas fotos e salve tudo de uma só vez.</p></div>
 
    <div className="gallery-manager">
     <div className="gallery-manager-head">
       <div>
         <h3>Galeria do anúncio</h3>
-        <p>Arraste as fotos para reordenar. A primeira foto é a foto principal.</p>
+        <p>Arraste as fotos para reordenar. A primeira foto é a principal.</p>
       </div>
-      <span className="gallery-counter">{gallery.length}/8 fotos</span>
+      <span className="gallery-counter">{gallery.length+newFiles.length}/8 fotos</span>
     </div>
 
     <div className="gallery-manager-grid">
@@ -133,16 +135,16 @@ export default function EditProduct(){
     <div className="gallery-add-box">
       <div className="gallery-add-copy">
         <b>Adicionar mais fotos</b>
-        <span>Você ainda pode incluir {remainingSlots} foto(s) nesta galeria.</span>
+        <span>{newFiles.length ? `${newFiles.length} nova(s) foto(s) pronta(s). Clique em “Salvar alterações” para enviar.` : `Você ainda pode incluir ${Math.max(0,8-gallery.length)} foto(s) nesta galeria.`}</span>
       </div>
       <label className="gallery-add-input">
         <UploadCloud/>
-        <span>Selecionar imagens</span>
-        <input ref={addInputRef} type="file" accept="image/*" multiple onChange={onFiles} disabled={remainingSlots<=0}/>
+        <span>{newFiles.length?'Trocar seleção':'Selecionar imagens'}</span>
+        <input type="file" accept="image/*" multiple onChange={onFiles} disabled={gallery.length>=8}/>
       </label>
-      <button type="button" className="primary" onClick={uploadMoreImages} disabled={!newFiles.length || galleryBusy}>Adicionar fotos</button>
     </div>
-    {newPreviews.length>0 && <div className="gallery-new-preview">{newPreviews.map((src,i)=><img key={i} src={src} alt={`Prévia ${i+1}`}/>)}</div>}
+
+    {newPreviews.length>0 && <div className="gallery-new-preview">{newPreviews.map((src,i)=><div className="pending-image-card" key={src}><img src={src} alt={`Nova foto ${i+1}`}/><button type="button" onClick={()=>removePendingImage(i)} aria-label="Remover foto selecionada"><Trash2 size={14}/></button></div>)}</div>}
    </div>
 
    <form onSubmit={submit} className="publish-form">
@@ -153,7 +155,7 @@ export default function EditProduct(){
     <label>Categoria<select name="category_slug" value={form.category_slug} onChange={change} required><option value="">Selecione</option>{cats.map(c=><option key={c.slug} value={c.slug}>{c.name}</option>)}</select></label>
     <div className="three-cols"><label>Cidade<input name="city" value={form.city} onChange={change} required/></label><label>Bairro<input name="neighborhood" value={form.neighborhood} onChange={change}/></label><label>UF<input name="state" value={form.state} onChange={change} maxLength="2" required/></label></div>
     {err&&<div className="form-error">{err}</div>}
-    <button className="primary wide" disabled={busy}><Save/>{busy?'Salvando...':'Salvar alterações'}</button>
+    <button className="primary wide" disabled={busy||galleryBusy}><Save/>{busy?'Salvando anúncio e fotos...':'Salvar alterações'}</button>
    </form>
   </div>
  </div>

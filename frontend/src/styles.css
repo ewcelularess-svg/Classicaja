@@ -1854,3 +1854,8 @@ img,svg{max-width:100%}
   background:#e2e8f0!important;
   color:#334155!important;
 }
+
+/* V2.12.5 — fotos novas são enviadas somente ao salvar o anúncio */
+.pending-image-card{position:relative;min-width:0}
+.pending-image-card img{display:block;width:100%}
+.pending-image-card button{position:absolute;top:6px;right:6px;width:30px;height:30px;border:0;border-radius:50%;background:rgba(17,24,39,.86);color:#fff;display:grid;place-items:center;box-shadow:0 4px 10px rgba(0,0,0,.18)}
