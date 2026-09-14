@@ -453,9 +453,48 @@ class VerifyIn(BaseModel):
 
 
 PLANS = {
-    "boost_7": {"name": "Destaque 7 dias", "amount": 19.90, "days": 7, "boost": 1},
-    "boost_15": {"name": "Destaque 15 dias", "amount": 34.90, "days": 15, "boost": 2},
-    "boost_30": {"name": "Destaque Premium 30 dias", "amount": 59.90, "days": 30, "boost": 3},
+    "boost_7": {
+        "name": "Destaque Básico 7 dias",
+        "amount": 19.90,
+        "days": 7,
+        "boost": 1,
+        "badge": "Entrada",
+        "tagline": "Plano econômico para começar a destacar seu anúncio.",
+        "features": [
+            "Selo de anúncio em destaque",
+            "Prioridade básica nas buscas",
+            "7 dias de visibilidade reforçada"
+        ]
+    },
+    "boost_15": {
+        "name": "Destaque Plus 15 dias",
+        "amount": 34.90,
+        "days": 15,
+        "boost": 2,
+        "badge": "Intermediário",
+        "tagline": "Mais tempo no topo e mais força para vender rápido.",
+        "features": [
+            "Tudo do plano Básico",
+            "Maior prioridade nas buscas",
+            "Mais tempo em evidência",
+            "Melhor posição no catálogo"
+        ]
+    },
+    "boost_30": {
+        "name": "Destaque Premium 30 dias",
+        "amount": 59.90,
+        "days": 30,
+        "boost": 3,
+        "badge": "Mais completo",
+        "tagline": "O máximo de visibilidade para vender com mais velocidade.",
+        "features": [
+            "Tudo do plano Plus",
+            "Prioridade máxima nas buscas",
+            "30 dias de destaque premium",
+            "Mais visualizações no catálogo",
+            "Maior exposição entre os anúncios"
+        ]
+    },
 }
 
 

@@ -114,24 +114,22 @@ export default function Home(){
     <div className="plans-highlight-head">
       <div>
         <span className="section-kicker">PLANOS DE DESTAQUE</span>
-        <h2>Mais visibilidade para vender mais rápido</h2>
-        <p>Escolha um plano para colocar seu anúncio em evidência, ganhar prioridade nas buscas e aparecer antes dos demais.</p>
+        <h2>Quanto maior o plano, mais vantagens você recebe</h2>
+        <p>O plano mais barato entrega o essencial. Os planos mais caros oferecem mais prioridade, mais tempo de exposição e mais visibilidade para vender rápido.</p>
       </div>
       <Link className="primary" to="/publicar">Publicar anúncio</Link>
     </div>
     <div className="plans-highlight-grid">
-      {plans.map((plan, index)=><article key={plan.code} className={`plan-teaser-card ${index===1?'recommended':''}`}>
-        {index===1 && <span className="plan-ribbon">Mais escolhido</span>}
-        <span className="plan-mini-kicker">{plan.name}</span>
+      {plans.map((plan, index)=><article key={plan.code} className={`plan-teaser-card ${index===plans.length-1?'recommended':''}`}>
+        {index===plans.length-1 && <span className="plan-ribbon">Mais vantagens</span>}
+        <span className="plan-mini-kicker">{plan.badge||plan.name}</span>
         <h3>{plan.name}</h3>
         <div className="plan-teaser-price">{money(plan.amount)}</div>
-        <p>Destaque seu anúncio por mais tempo e aumente sua chance de venda.</p>
+        <p>{plan.tagline||'Destaque seu anúncio por mais tempo e aumente sua chance de venda.'}</p>
         <ul>
-          <li>Prioridade nas buscas</li>
-          <li>Selo de anúncio em destaque</li>
-          <li>Mais visualizações no catálogo</li>
+          {(plan.features||[]).map((feature)=><li key={feature}>{feature}</li>)}
         </ul>
-        <Link className={`plan-cta ${index===1?'active':''}`} to="/publicar">Quero este plano</Link>
+        <Link className={`plan-cta ${index===plans.length-1?'active':''}`} to="/publicar">Quero este plano</Link>
       </article>)}
     </div>
     <div className="plans-highlight-note">Você ativa o plano logo após publicar o anúncio, sem complicação.</div>

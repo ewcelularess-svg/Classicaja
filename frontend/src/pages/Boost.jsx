@@ -14,14 +14,14 @@ export default function Boost(){
  useEffect(()=>{api('/api/plans').then(setPlans);api(`/api/products/${id}`).then(setP)},[id]);
  const buy=async code=>{setBusy(true);try{const o=await api('/api/payments',{method:'POST',body:JSON.stringify({product_id:id,plan_code:code,method})});setOrder(o)}finally{setBusy(false)}};
  const confirm=async()=>{setBusy(true);try{await api(`/api/payments/${order.id}/demo-confirm`,{method:'POST'});setOrder({...order,status:'paid'});const updated=await api(`/api/products/${id}`);setP(updated)}finally{setBusy(false)}};
- const featuredIndex=useMemo(()=>plans.length>1?1:0,[plans]);
+ const featuredIndex=useMemo(()=>plans.length>0?plans.length-1:0,[plans]);
 
  return <div className="page boost-page">
   <div className="boost-hero-card">
     <div>
       <span className="section-kicker">MONETIZAÇÃO</span>
       <h1>Impulsione seu anúncio</h1>
-      <p>Ganhe mais visualizações, prioridade nas listagens e destaque visual para vender mais rápido.</p>
+      <p>Escolha entre planos com níveis diferentes de vantagem: o mais básico entrega o essencial e o mais caro oferece o máximo de exposição.</p>
       <div className="boost-hero-benefits">
         <span><Zap size={16}/> Mais cliques</span>
         <span><Sparkles size={16}/> Mais destaque</span>
@@ -39,14 +39,12 @@ export default function Boost(){
 
     <div className="plan-grid premium-plan-grid">
       {plans.map((plan, index)=><div className={`plan-card ${index===featuredIndex?'plan-card-featured':''}`} key={plan.code}>
-        {index===featuredIndex && <span className="plan-ribbon">Mais escolhido</span>}
-        <span className="plan-name">{plan.name}</span>
+        {index===featuredIndex && <span className="plan-ribbon">Mais vantagens</span>}
+        <span className="plan-name">{plan.badge||plan.name}</span>
         <b>{money(plan.amount)}</b>
-        <p className="plan-copy">Seu anúncio fica mais visível, com prioridade e selo especial.</p>
+        <p className="plan-copy">{plan.tagline||'Seu anúncio fica mais visível, com prioridade e selo especial.'}</p>
         <ul>
-          <li><Check/> prioridade nas buscas</li>
-          <li><Check/> selo de destaque</li>
-          <li><Check/> melhor posição no catálogo</li>
+          {(plan.features||[]).map((feature)=><li key={feature}><Check/> {feature}</li>)}
         </ul>
         <button className="primary wide" disabled={busy} onClick={()=>buy(plan.code)}>Escolher plano</button>
       </div>)}
