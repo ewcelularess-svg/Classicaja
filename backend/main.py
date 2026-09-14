@@ -45,7 +45,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.9.0")
+app = FastAPI(title="ClassificaJá API", version="2.10.3")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -621,7 +621,7 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.9.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.10.3", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -720,6 +720,80 @@ def get_product(product_id: str, user=Depends(optional_user)):
         db.commit()
         row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
         return product_dict(db, row, user["id"] if user else None)
+
+
+@app.get("/api/products/{product_id}/related")
+def related_products(product_id: str, limit: int = 4, user=Depends(optional_user)):
+    limit = max(1, min(int(limit or 4), 12))
+    with conn() as db:
+        cleanup_expired_features(db)
+        db.commit()
+        base = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        if not base:
+            raise HTTPException(404, "Anúncio não encontrado")
+
+        price = float(base["price"] or 0)
+        low = max(0, price * 0.65)
+        high = price * 1.35 if price > 0 else 999999999
+        items = []
+        seen = {product_id}
+
+        def add_rows(rows):
+            for row in rows:
+                if row["id"] not in seen:
+                    items.append(row)
+                    seen.add(row["id"])
+                    if len(items) >= limit:
+                        return True
+            return False
+
+        # 1) Melhor correspondência: mesma categoria + preço semelhante,
+        #    priorizando a mesma cidade.
+        rows = db.execute(
+            """SELECT * FROM products
+               WHERE status='active' AND id<>? AND category_slug=? AND price BETWEEN ? AND ?
+               ORDER BY CASE WHEN city=? THEN 0 ELSE 1 END,
+                        ABS(price-?), boost_level DESC, created_at DESC
+               LIMIT ?""",
+            (product_id, base["category_slug"], low, high, base["city"], price, limit * 3),
+        ).fetchall()
+        if add_rows(rows):
+            return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+
+        # 2) Mesma categoria, mesmo que o preço seja diferente.
+        rows = db.execute(
+            """SELECT * FROM products
+               WHERE status='active' AND id<>? AND category_slug=?
+               ORDER BY CASE WHEN city=? THEN 0 ELSE 1 END,
+                        ABS(price-?), boost_level DESC, created_at DESC
+               LIMIT ?""",
+            (product_id, base["category_slug"], base["city"], price, limit * 3),
+        ).fetchall()
+        if add_rows(rows):
+            return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+
+        # 3) Mesma cidade, qualquer categoria, priorizando preço próximo.
+        rows = db.execute(
+            """SELECT * FROM products
+               WHERE status='active' AND id<>? AND city=?
+               ORDER BY ABS(price-?), boost_level DESC, created_at DESC
+               LIMIT ?""",
+            (product_id, base["city"], price, limit * 3),
+        ).fetchall()
+        if add_rows(rows):
+            return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+
+        # 4) Último fallback: outros anúncios ativos do marketplace.
+        rows = db.execute(
+            """SELECT * FROM products
+               WHERE status='active' AND id<>?
+               ORDER BY ABS(price-?), boost_level DESC, views DESC, created_at DESC
+               LIMIT ?""",
+            (product_id, price, limit * 4),
+        ).fetchall()
+        add_rows(rows)
+
+        return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
 
 
 @app.post("/api/products")
