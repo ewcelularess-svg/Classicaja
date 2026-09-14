@@ -4,6 +4,7 @@ import {Link, useNavigate, useParams} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import {useAuth} from '../main';
 const money=v=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const statusLabel=s=>({active:'Ativo',paused:'Pausado',rejected:'Rejeitado',sold:'Vendido'}[s]||s);
 export default function Product(){
  const {id}=useParams(); const [p,setP]=useState(null); const [err,setErr]=useState(''); const {user}=useAuth(); const nav=useNavigate();
  const load=()=>api(`/api/products/${id}`).then(setP).catch(e=>setErr(e.message));
@@ -25,5 +26,5 @@ export default function Product(){
    <div className="seller-box"><span>Vendido por</span><b className="seller-name">{p.seller?.name || 'Vendedor'} {p.seller?.verified&&<BadgeCheck className="verified-icon"/>}</b>{p.seller?.verified&&<small>Identidade verificada pela plataforma</small>}</div>
    {user?.id!==p.seller_id&&<button className="report-btn" onClick={report}><Flag/> Denunciar anúncio</button>}
   </aside>
- </div><section className="description"><h2>Descrição</h2><p>{p.description}</p><div className="facts"><span>Categoria: <b>{p.category_slug}</b></span><span>Visualizações: <b>{p.views}</b></span><span>Status: <b>{p.status}</b></span></div></section></div>
+ </div><section className="description"><h2>Descrição</h2><p>{p.description}</p><div className="facts"><span>Categoria: <b>{p.category_slug}</b></span><span>Visualizações: <b>{p.views}</b></span><span>Status: <b>{statusLabel(p.status)}</b></span></div></section></div>
 }
