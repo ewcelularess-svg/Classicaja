@@ -2951,3 +2951,25 @@ button{
 .notification-toast.chat>svg{
   color:#2563eb!important;
 }
+
+/* =========================================================
+   V2.15.0 — BUSCA UNIFICADA NA HOME
+   ========================================================= */
+.home-header-row{
+  justify-content:space-between!important;
+}
+.home-header-row .premium-actions{
+  margin-left:auto!important;
+}
+.home-subnav-inner{
+  padding-left:0!important;
+  justify-content:center!important;
+}
+@media (min-width:901px){
+  .home-topbar .premium-header-row{
+    min-height:78px!important;
+  }
+}
+@media (max-width:900px){
+  .home-subnav-inner{display:none!important}
+}

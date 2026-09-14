@@ -9,13 +9,15 @@ import {
   ShieldCheck,
   UserCircle
 } from 'lucide-react';
-import {Link, NavLink, useNavigate} from 'react-router-dom';
+import {Link, NavLink, useLocation, useNavigate} from 'react-router-dom';
 import {useAuth} from '../main';
 import NotificationsMenu from './NotificationsMenu';
 
 export default function Header(){
   const {user, logout}=useAuth();
   const nav=useNavigate();
+  const location=useLocation();
+  const isHome=location.pathname==='/' ;
   const [term,setTerm]=useState('');
   const [city,setCity]=useState('');
 
@@ -27,13 +29,13 @@ export default function Header(){
     nav(`/${params.toString()?`?${params.toString()}`:''}`);
   }
 
-  return <header className="topbar premium-topbar">
-    <div className="topbar-inner premium-header-row">
+  return <header className={`topbar premium-topbar ${isHome?'home-topbar':''}`}>
+    <div className={`topbar-inner premium-header-row ${isHome?'home-header-row':''}`}>
       <Link className="brand brand-premium" to="/" aria-label="ClassificaJá - Início">
         <img src="/logo-classificaja.png" alt="ClassificaJá" className="brand-logo"/>
       </Link>
 
-      <form className="header-search" onSubmit={submitSearch}>
+      {!isHome&&<form className="header-search" onSubmit={submitSearch}>
         <div className="header-search-field header-search-keyword">
           <Search/>
           <input value={term} onChange={e=>setTerm(e.target.value)} placeholder="O que você está procurando?" aria-label="Buscar produtos"/>
@@ -44,7 +46,7 @@ export default function Header(){
           <input value={city} onChange={e=>setCity(e.target.value)} placeholder="Cidade" aria-label="Cidade"/>
         </div>
         <button type="submit">Buscar</button>
-      </form>
+      </form>}
 
       <div className="header-actions premium-actions">
         {user&&<NotificationsMenu/>}
@@ -63,7 +65,7 @@ export default function Header(){
     </div>
 
     <div className="header-subnav">
-      <div className="header-subnav-inner">
+      <div className={`header-subnav-inner ${isHome?'home-subnav-inner':''}`}>
         <NavLink to="/">Comprar</NavLink>
         <a href="/#produtos">Produtos</a>
         <a href="/#categorias">Categorias</a>
