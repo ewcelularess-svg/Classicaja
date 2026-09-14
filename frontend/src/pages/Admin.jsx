@@ -36,7 +36,7 @@ function PlanEditor({plan,onSaved}){
     <div className="master-form-grid">
       <label>Nome<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label>
       <label>Preço (R$)<input type="number" min="0" step="0.01" value={form.amount} disabled={plan.free} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
-      <label>Duração (dias)<input type="number" min="0" value={form.days} disabled={plan.free} onChange={e=>setForm({...form,days:e.target.value})}/></label>
+      <label>Duração (dias)<input type="number" min="0" value={form.days} onChange={e=>setForm({...form,days:e.target.value})}/><small className="field-help">Defina livremente a duração do plano grátis.</small></label>
       <label>Selo<input value={form.badge} onChange={e=>setForm({...form,badge:e.target.value})}/></label>
     </div>
     <label className="master-wide-label">Descrição<input value={form.tagline} onChange={e=>setForm({...form,tagline:e.target.value})}/></label>

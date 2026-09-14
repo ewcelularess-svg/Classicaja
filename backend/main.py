@@ -46,7 +46,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.13.0")
+app = FastAPI(title="ClassificaJá API", version="2.13.3")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -1565,8 +1565,8 @@ def admin_update_plan(plan_code: str, payload: AdminPlanIn, user=Depends(admin_u
         if "days" in updates and int(updates["days"]) < 0:
             raise HTTPException(400, "Duração inválida")
         if current.get("free"):
+            # O plano gratuito sempre mantém preço zero, mas a duração é definida pelo Master.
             updates["amount"] = 0.0
-            updates["days"] = 0
         fields = []
         values = []
         mapping = {
