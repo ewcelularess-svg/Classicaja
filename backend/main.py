@@ -16,7 +16,8 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from cryptography.fernet import Fernet, InvalidToken
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -32,7 +33,88 @@ SUPABASE_SECRET_KEY = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_S
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "product-images").strip() or "product-images"
 USE_SUPABASE_STORAGE = bool(SUPABASE_URL and SUPABASE_SECRET_KEY)
 SEED_DEMO_DATA = os.getenv("SEED_DEMO_DATA", "false" if USE_POSTGRES else "true").lower() in {"1", "true", "yes", "sim"}
+
+PAYMENT_CONFIG_SECRET = (os.getenv("PAYMENT_CONFIG_KEY") or "").strip()
+if not PAYMENT_CONFIG_SECRET:
+    PAYMENT_CONFIG_SECRET = "|".join(x for x in [SUPABASE_SECRET_KEY, os.getenv("ADMIN_PASSWORD", "").strip()] if x)
+
+PAYMENT_PROVIDER_DEFS = {
+    "mercadopago": {
+        "label": "Mercado Pago",
+        "description": "Recebimento via PIX usando credenciais da sua aplicação Mercado Pago.",
+        "fields": [
+            {"key": "public_key", "label": "Public Key", "secret": False},
+            {"key": "access_token", "label": "Access Token", "secret": True},
+        ],
+        "required": ["access_token"],
+    },
+    "asaas": {
+        "label": "Asaas",
+        "description": "PIX com API Key da sua conta Asaas.",
+        "fields": [
+            {"key": "api_key", "label": "API Key", "secret": True},
+        ],
+        "required": ["api_key"],
+    },
+    "pagbank": {
+        "label": "PagBank",
+        "description": "Recebimento via PIX com token da sua integração PagBank.",
+        "fields": [
+            {"key": "token", "label": "Token", "secret": True},
+            {"key": "client_id", "label": "Client ID (quando exigido)", "secret": True},
+            {"key": "client_secret", "label": "Client Secret (quando exigido)", "secret": True},
+        ],
+        "required": ["token"],
+    },
+    "efipay": {
+        "label": "Efí Bank",
+        "description": "Integração PIX da Efí com Client ID e Client Secret.",
+        "fields": [
+            {"key": "client_id", "label": "Client ID", "secret": True},
+            {"key": "client_secret", "label": "Client Secret", "secret": True},
+            {"key": "pix_key", "label": "Chave PIX", "secret": True},
+        ],
+        "required": ["client_id", "client_secret"],
+    },
+    "inter": {
+        "label": "Banco Inter",
+        "description": "Configuração para recebimento PIX via API do Banco Inter.",
+        "fields": [
+            {"key": "client_id", "label": "Client ID", "secret": True},
+            {"key": "client_secret", "label": "Client Secret", "secret": True},
+            {"key": "pix_key", "label": "Chave PIX", "secret": True},
+        ],
+        "required": ["client_id", "client_secret"],
+    },
+}
 MASTER_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
+
+def payment_fernet():
+    if not PAYMENT_CONFIG_SECRET:
+        return None
+    raw = hashlib.sha256(PAYMENT_CONFIG_SECRET.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(raw))
+
+
+def encrypt_payment_credentials(data: dict) -> str:
+    f = payment_fernet()
+    if not f:
+        raise HTTPException(500, "Configure PAYMENT_CONFIG_KEY no Render para proteger as credenciais de pagamento")
+    payload = json.dumps(data or {}, ensure_ascii=False).encode("utf-8")
+    return f.encrypt(payload).decode("utf-8")
+
+
+def decrypt_payment_credentials(token: str | None) -> dict:
+    if not token:
+        return {}
+    f = payment_fernet()
+    if not f:
+        return {}
+    try:
+        return json.loads(f.decrypt(token.encode("utf-8")).decode("utf-8"))
+    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+
 
 try:
     import psycopg
@@ -375,6 +457,19 @@ def init_db():
         ensure_column(db, "products", "featured_until", "TEXT")
         ensure_column(db, "products", "boost_level", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "products", "updated_at", "TEXT")
+        db.execute("""CREATE TABLE IF NOT EXISTS payment_integrations (
+            provider TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            mode TEXT NOT NULL DEFAULT 'sandbox',
+            credentials_enc TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+        for provider in PAYMENT_PROVIDER_DEFS:
+            db.execute(
+                "INSERT OR IGNORE INTO payment_integrations(provider,enabled,is_default,mode,credentials_enc,updated_at) VALUES (?,?,?,?,?,?)",
+                (provider, 0, 0, "sandbox", None, now_iso()),
+            )
         ensure_column(db, "products", "image_urls", "TEXT")
         ensure_column(db, "products", "original_price", "REAL")
         ensure_column(db, "payment_orders", "provider", "TEXT")
@@ -1049,6 +1144,13 @@ async def add_product_gallery_images(product_id: str, images: list[UploadFile] =
     return {"ok": True, "image_url": gallery_urls[0], "images": gallery_urls}
 
 
+class PaymentIntegrationIn(BaseModel):
+    enabled: bool = False
+    is_default: bool = False
+    mode: str = "sandbox"
+    credentials: dict[str, str] = Field(default_factory=dict)
+
+
 class GalleryOrderIn(BaseModel):
     images: list[str]
 
@@ -1622,6 +1724,100 @@ def admin_cancel_payment(payment_id: str, user=Depends(admin_user)):
         db.execute("UPDATE payment_orders SET status='cancelled' WHERE id=?", (payment_id,))
         db.commit()
     return {"ok": True}
+
+
+def payment_integration_view(row):
+    data = dict(row)
+    provider = data.get("provider")
+    definition = PAYMENT_PROVIDER_DEFS.get(provider, {})
+    credentials = decrypt_payment_credentials(data.get("credentials_enc"))
+    fields = []
+    for field in definition.get("fields", []):
+        key = field["key"]
+        value = credentials.get(key)
+        fields.append({
+            **field,
+            "configured": bool(value),
+            "value": "" if field.get("secret") else (value or ""),
+        })
+    required = definition.get("required", [])
+    configured = all(bool(credentials.get(key)) for key in required) if required else False
+    return {
+        "provider": provider,
+        "label": definition.get("label", provider),
+        "description": definition.get("description", ""),
+        "enabled": bool(data.get("enabled")),
+        "is_default": bool(data.get("is_default")),
+        "mode": data.get("mode") or "sandbox",
+        "configured": configured,
+        "security_ready": bool(payment_fernet()),
+        "fields": fields,
+        "updated_at": data.get("updated_at"),
+    }
+
+
+@app.get("/api/admin/payment-integrations")
+def admin_payment_integrations(user=Depends(admin_user)):
+    with conn() as db:
+        rows = db.execute("SELECT * FROM payment_integrations ORDER BY provider").fetchall()
+        by_provider = {r["provider"]: r for r in rows}
+        result = []
+        for provider in PAYMENT_PROVIDER_DEFS:
+            row = by_provider.get(provider)
+            if not row:
+                db.execute(
+                    "INSERT OR IGNORE INTO payment_integrations(provider,enabled,is_default,mode,credentials_enc,updated_at) VALUES (?,?,?,?,?,?)",
+                    (provider, 0, 0, "sandbox", None, now_iso()),
+                )
+                row = db.execute("SELECT * FROM payment_integrations WHERE provider=?", (provider,)).fetchone()
+            result.append(payment_integration_view(row))
+        db.commit()
+    return result
+
+
+@app.put("/api/admin/payment-integrations/{provider}")
+def admin_update_payment_integration(provider: str, payload: PaymentIntegrationIn, user=Depends(admin_user)):
+    if provider not in PAYMENT_PROVIDER_DEFS:
+        raise HTTPException(404, "Provedor de pagamento não suportado")
+    if payload.mode not in {"sandbox", "production"}:
+        raise HTTPException(400, "Ambiente inválido")
+    with conn() as db:
+        row = db.execute("SELECT * FROM payment_integrations WHERE provider=?", (provider,)).fetchone()
+        if not row:
+            db.execute(
+                "INSERT OR IGNORE INTO payment_integrations(provider,enabled,is_default,mode,credentials_enc,updated_at) VALUES (?,?,?,?,?,?)",
+                (provider, 0, 0, "sandbox", None, now_iso()),
+            )
+            row = db.execute("SELECT * FROM payment_integrations WHERE provider=?", (provider,)).fetchone()
+        current = decrypt_payment_credentials(row["credentials_enc"])
+        allowed_keys = {f["key"] for f in PAYMENT_PROVIDER_DEFS[provider].get("fields", [])}
+        for key, value in (payload.credentials or {}).items():
+            if key not in allowed_keys:
+                continue
+            cleaned = str(value or "").strip()
+            if cleaned:
+                current[key] = cleaned
+        required = PAYMENT_PROVIDER_DEFS[provider].get("required", [])
+        if payload.enabled and not all(bool(current.get(key)) for key in required):
+            missing = [key for key in required if not current.get(key)]
+            raise HTTPException(400, f"Preencha as credenciais obrigatórias: {', '.join(missing)}")
+        encrypted = encrypt_payment_credentials(current) if current else None
+        if payload.is_default:
+            db.execute("UPDATE payment_integrations SET is_default=0")
+        db.execute(
+            "UPDATE payment_integrations SET enabled=?,is_default=?,mode=?,credentials_enc=?,updated_at=? WHERE provider=?",
+            (1 if payload.enabled else 0, 1 if payload.is_default else 0, payload.mode, encrypted, now_iso(), provider),
+        )
+        db.commit()
+        updated = db.execute("SELECT * FROM payment_integrations WHERE provider=?", (provider,)).fetchone()
+    return payment_integration_view(updated)
+
+
+@app.get("/api/admin/payment-integrations/default")
+def admin_default_payment_integration(user=Depends(admin_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM payment_integrations WHERE is_default=1 AND enabled=1 LIMIT 1").fetchone()
+    return payment_integration_view(row) if row else None
 
 
 @app.get("/api/admin/reports")

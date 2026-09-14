@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {
   BadgeCheck, Ban, CheckCircle2, CircleDollarSign, Crown, Eye, Flag, LayoutDashboard,
-  PackageOpen, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle
+  KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle
 } from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api} from '../lib/api';
@@ -48,6 +48,57 @@ function PlanEditor({plan,onSaved}){
   </article>
 }
 
+function PaymentIntegrationCard({integration,onSaved}){
+  const initialCredentials={};
+  (integration.fields||[]).forEach(f=>{initialCredentials[f.key]=f.value||''});
+  const [form,setForm]=useState({
+    enabled:Boolean(integration.enabled),
+    is_default:Boolean(integration.is_default),
+    mode:integration.mode||'sandbox',
+    credentials:initialCredentials,
+  });
+  const [busy,setBusy]=useState(false);
+  const setCredential=(key,value)=>setForm({...form,credentials:{...form.credentials,[key]:value}});
+  const save=async()=>{
+    setBusy(true);
+    try{
+      await api(`/api/admin/payment-integrations/${integration.provider}`,{method:'PUT',body:JSON.stringify(form)});
+      await onSaved();
+    }catch(e){alert(e.message)}finally{setBusy(false)}
+  };
+  return <article className={`pix-integration-card ${integration.enabled?'enabled':''} ${integration.is_default?'default':''}`}>
+    <div className="pix-integration-head">
+      <div className="pix-provider-icon"><Landmark/></div>
+      <div className="pix-provider-title">
+        <div className="pix-provider-status-row">
+          <h3>{integration.label}</h3>
+          {integration.is_default&&<span className="pix-main-badge">Principal</span>}
+          <span className={`pix-config-badge ${integration.configured?'ok':'pending'}`}>{integration.configured?'Credenciais salvas':'Não configurado'}</span>
+        </div>
+        <p>{integration.description}</p>
+      </div>
+    </div>
+
+    <div className="pix-integration-controls">
+      <label className="pix-check-row"><input type="checkbox" checked={form.enabled} onChange={e=>setForm({...form,enabled:e.target.checked})}/><span>Ativar integração</span></label>
+      <label className="pix-check-row"><input type="checkbox" checked={form.is_default} onChange={e=>setForm({...form,is_default:e.target.checked})}/><span>Usar como provedor principal</span></label>
+      <label className="pix-mode-field">Ambiente<select value={form.mode} onChange={e=>setForm({...form,mode:e.target.value})}><option value="sandbox">Sandbox / Teste</option><option value="production">Produção / PIX real</option></select></label>
+    </div>
+
+    <div className="pix-credentials-grid">
+      {(integration.fields||[]).map(field=><label key={field.key}>{field.label}
+        <div className="pix-secret-input"><span>{field.secret?<LockKeyhole/>:<KeyRound/>}</span><input type={field.secret?'password':'text'} autoComplete="off" value={form.credentials[field.key]||''} onChange={e=>setCredential(field.key,e.target.value)} placeholder={field.configured?'Já configurado — deixe em branco para manter':'Cole a credencial aqui'}/></div>
+        {field.configured&&<small>Credencial já armazenada com segurança.</small>}
+      </label>)}
+    </div>
+
+    <div className="pix-webhook-box"><PlugZap/><div><b>Webhook do ClassificaJá</b><span>{`${window.location.origin}/api/payments/webhook/${integration.provider}`}</span><small>Use este endereço quando o conector real deste provedor for ativado.</small></div></div>
+
+    {!integration.security_ready&&<div className="pix-security-warning"><LockKeyhole/><span>Configure <b>PAYMENT_CONFIG_KEY</b> no Render antes de salvar credenciais de produção.</span></div>}
+    <button className="primary wide" onClick={save} disabled={busy}>{busy?'Salvando integração...':'Salvar integração PIX'}</button>
+  </article>
+}
+
 export default function Admin(){
  const [stats,setStats]=useState(null);
  const [products,setProducts]=useState([]);
@@ -55,6 +106,7 @@ export default function Admin(){
  const [reports,setReports]=useState([]);
  const [plans,setPlans]=useState([]);
  const [payments,setPayments]=useState([]);
+ const [integrations,setIntegrations]=useState([]);
  const [tab,setTab]=useState('overview');
  const [search,setSearch]=useState('');
  const [loading,setLoading]=useState(true);
@@ -63,10 +115,10 @@ export default function Admin(){
  const load=async()=>{
   setLoading(true); setErr('');
   try{
-   const [s,p,u,r,pl,py]=await Promise.all([
-    api('/api/admin/stats'),api('/api/admin/products'),api('/api/admin/users'),api('/api/admin/reports'),api('/api/admin/plans'),api('/api/admin/payments')
+   const [s,p,u,r,pl,py,ix]=await Promise.all([
+    api('/api/admin/stats'),api('/api/admin/products'),api('/api/admin/users'),api('/api/admin/reports'),api('/api/admin/plans'),api('/api/admin/payments'),api('/api/admin/payment-integrations')
    ]);
-   setStats(s);setProducts(p);setUsers(u);setReports(r);setPlans(pl);setPayments(py);
+   setStats(s);setProducts(p);setUsers(u);setReports(r);setPlans(pl);setPayments(py);setIntegrations(ix);
   }catch(e){setErr(e.message)}finally{setLoading(false)}
  };
  useEffect(()=>{load()},[]);
@@ -90,11 +142,11 @@ export default function Admin(){
  const metricCards=[
   ['Contas',stats?.users,<Users/>],['Anúncios',stats?.products,<PackageOpen/>],['Visualizações',stats?.views,<Eye/>],['Destaques ativos',stats?.active_boosts,<Crown/>],['Receita',money(stats?.revenue),<WalletCards/>],['Denúncias',stats?.open_reports,<Flag/>]
  ];
- const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['reports','Denúncias',Flag]];
+ const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['pix','Integrações PIX',Landmark],['reports','Denúncias',Flag]];
 
  return <div className="page master-admin-page">
   <div className="master-admin-header">
-   <div><span className="section-kicker">PAINEL MASTER</span><h1>Central de comando do ClassificaJá</h1><p>Gerencie contas, anúncios, planos, pagamentos e moderação em um só lugar.</p></div>
+   <div><span className="section-kicker">PAINEL MASTER</span><h1>Central de comando do ClassificaJá</h1><p>Gerencie contas, anúncios, planos, pagamentos, PIX e moderação em um só lugar.</p></div>
    <div className="master-admin-badge"><ShieldCheck/> Master Admin</div>
   </div>
 
@@ -118,6 +170,12 @@ export default function Admin(){
   {tab==='plans'&&<div className="master-plans-grid">{plans.map(p=><PlanEditor key={p.code} plan={p} onSaved={load}/>)}</div>}
 
   {tab==='payments'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Cliente</th><th>Plano</th><th>Anúncio</th><th>Valor</th><th>Forma</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody>{filteredPayments.map(p=><tr key={p.id}><td><b>{p.user_name||'Conta removida'}</b><small>{p.user_email||''}</small></td><td>{p.plan_name}</td><td>{p.product_title||'—'}</td><td><b>{money(p.amount)}</b></td><td>{p.method==='pix'?'PIX':p.method==='card'?'Cartão':p.method}</td><td><span className={`master-status ${p.status}`}>{statusLabel(p.status)}</span></td><td>{date(p.created_at)}</td><td>{p.status==='pending'?<button className="danger-lite-btn" onClick={()=>cancelPayment(p)}><XCircle/>Cancelar</button>:'—'}</td></tr>)}</tbody></table></div>}
+
+  {tab==='pix'&&<section className="pix-master-section">
+    <div className="pix-master-intro"><div><span className="section-kicker">RECEBIMENTO PIX</span><h2>Integrações de pagamento</h2><p>Cadastre e gerencie suas credenciais de pagamento diretamente no Master. As chaves privadas ficam criptografadas no backend e não são mostradas novamente.</p></div><div className="pix-security-pill"><ShieldCheck/> Credenciais protegidas</div></div>
+    <div className="pix-provider-grid">{integrations.map(item=><PaymentIntegrationCard key={item.provider} integration={item} onSaved={load}/>)}</div>
+    <div className="pix-master-note"><b>Importante:</b> esta tela prepara e armazena as credenciais com segurança. O checkout atual continua no modo de demonstração até que o conector de criação de cobrança e validação de webhook do provedor escolhido seja ativado no backend.</div>
+  </section>}
 
   {tab==='reports'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Anúncio</th><th>Denunciante</th><th>Motivo</th><th>Detalhes</th><th>Status</th><th>Ação</th></tr></thead><tbody>{reports.map(r=><tr key={r.id}><td><b>{r.product_title}</b></td><td>{r.reporter_name}</td><td>{r.reason}</td><td>{r.details||'—'}</td><td><span className={`master-status ${r.status}`}>{statusLabel(r.status)}</span></td><td>{r.status==='open'?<button className="secondary-btn" onClick={()=>resolve(r.id)}>Resolver</button>:'—'}</td></tr>)}</tbody></table></div>}
  </div>

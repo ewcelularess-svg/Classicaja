@@ -7,3 +7,6 @@ ADMIN_PASSWORD=CRIE_UMA_SENHA_FORTE
 ADMIN_NAME=Administrador
 SEED_DEMO_DATA=false
 DB_SSLMODE=require
+
+# Opcional, recomendado: chave longa para criptografar credenciais PIX no banco
+PAYMENT_CONFIG_KEY=
