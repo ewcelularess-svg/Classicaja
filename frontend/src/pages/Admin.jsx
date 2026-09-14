@@ -1,0 +1,19 @@
+import React,{useEffect,useState} from 'react';
+import {BadgeCheck, Eye, Flag, PackageOpen, ShieldCheck, Users, WalletCards} from 'lucide-react';
+import {api} from '../lib/api';
+const money=v=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+export default function Admin(){
+ const [stats,setStats]=useState(null),[products,setProducts]=useState([]),[users,setUsers]=useState([]),[reports,setReports]=useState([]),[tab,setTab]=useState('products');
+ const load=()=>Promise.all([api('/api/admin/stats').then(setStats),api('/api/admin/products').then(setProducts),api('/api/admin/users').then(setUsers),api('/api/admin/reports').then(setReports)]);
+ useEffect(()=>{load()},[]);
+ const setStatus=async(id,status)=>{await api(`/api/admin/products/${id}/status`,{method:'PUT',body:JSON.stringify({status})});load()};
+ const verify=async u=>{await api(`/api/admin/users/${u.id}/verify`,{method:'PUT',body:JSON.stringify({verified:!u.verified})});load()};
+ const resolve=async id=>{await api(`/api/admin/reports/${id}/resolve`,{method:'PUT'});load()};
+ return <div className="page admin-page"><div className="section-head"><div><span className="section-kicker">ADMINISTRAÇÃO</span><h1>Central de controle</h1></div><span className="admin-badge"><ShieldCheck/> Admin</span></div>
+ {stats&&<div className="metric-grid admin-metrics"><div className="metric-card"><Users/><div><b>{stats.users}</b><small>Usuários</small></div></div><div className="metric-card"><PackageOpen/><div><b>{stats.products}</b><small>Anúncios</small></div></div><div className="metric-card"><Eye/><div><b>{stats.views}</b><small>Visualizações</small></div></div><div className="metric-card"><Flag/><div><b>{stats.open_reports}</b><small>Denúncias abertas</small></div></div><div className="metric-card"><WalletCards/><div><b>{money(stats.revenue)}</b><small>Receita demo</small></div></div></div>}
+ <div className="admin-tabs"><button className={tab==='products'?'active':''} onClick={()=>setTab('products')}>Anúncios</button><button className={tab==='users'?'active':''} onClick={()=>setTab('users')}>Usuários</button><button className={tab==='reports'?'active':''} onClick={()=>setTab('reports')}>Denúncias</button></div>
+ {tab==='products'&&<div className="admin-table"><div className="table-row head"><span>Anúncio</span><span>Local</span><span>Status</span><span>Ação</span></div>{products.map(p=><div className="table-row" key={p.id}><span><b>{p.title}</b><small>{money(p.price)}</small></span><span>{p.city}/{p.state}</span><span><i className={`status-chip ${p.status}`}>{p.status}</i></span><span><select value={p.status} onChange={e=>setStatus(p.id,e.target.value)}><option value="active">Ativo</option><option value="paused">Pausado</option><option value="rejected">Rejeitado</option><option value="sold">Vendido</option></select></span></div>)}</div>}
+ {tab==='users'&&<div className="admin-table"><div className="table-row head"><span>Usuário</span><span>E-mail</span><span>Tipo</span><span>Verificação</span></div>{users.map(u=><div className="table-row" key={u.id}><span><b>{u.name}</b><small>{u.status}</small></span><span>{u.email}</span><span>{u.role}</span><span><button className={`verify-btn ${u.verified?'on':''}`} onClick={()=>verify(u)}><BadgeCheck/>{u.verified?'Verificado':'Verificar'}</button></span></div>)}</div>}
+ {tab==='reports'&&<div className="admin-table"><div className="table-row head"><span>Anúncio</span><span>Motivo</span><span>Status</span><span>Ação</span></div>{reports.map(r=><div className="table-row" key={r.id}><span><b>{r.product_title}</b><small>por {r.reporter_name}</small></span><span>{r.reason}</span><span>{r.status}</span><span>{r.status==='open'?<button className="secondary-btn" onClick={()=>resolve(r.id)}>Resolver</button>:'—'}</span></div>)}</div>}
+ </div>
+}
