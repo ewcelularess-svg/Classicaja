@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {Bell, CheckCheck, Megaphone} from 'lucide-react';
+import {Bell, CheckCheck, Megaphone, MessageCircle} from 'lucide-react';
 import {useNavigate} from 'react-router-dom';
 import {api} from '../lib/api';
 
@@ -19,17 +19,17 @@ export default function NotificationsMenu(){
 
  const refresh=async()=>{
   try{
-   const [data,countData]=await Promise.all([api('/api/me/notifications?limit=20'),api('/api/me/notifications/unread-count')]);
+   const [data,countData]=await Promise.all([api('/api/me/notifications?limit=30'),api('/api/me/notifications/unread-count')]);
    setItems(data||[]);
    setUnreadCount(Number(countData?.count||0));
    const newestUnread=(data||[]).find(n=>Boolean(n.unread));
    if(newestUnread){
     if(initialized.current && newestUnread.id!==lastNewest.current){
       setToast(newestUnread);
-      setTimeout(()=>setToast(null),6500);
+      setTimeout(()=>setToast(null),7000);
     }else if(!initialized.current && recentEnough(newestUnread.created_at)){
       setToast(newestUnread);
-      setTimeout(()=>setToast(null),6500);
+      setTimeout(()=>setToast(null),7000);
     }
     lastNewest.current=newestUnread.id;
    }
@@ -39,8 +39,13 @@ export default function NotificationsMenu(){
 
  useEffect(()=>{
   refresh();
-  const timer=setInterval(refresh,20000);
-  return()=>clearInterval(timer);
+  const timer=setInterval(refresh,10000);
+  const manualRefresh=()=>refresh();
+  window.addEventListener('classificaja:refresh-notifications',manualRefresh);
+  return()=>{
+   clearInterval(timer);
+   window.removeEventListener('classificaja:refresh-notifications',manualRefresh);
+  };
  },[]);
 
  useEffect(()=>{
@@ -58,6 +63,11 @@ export default function NotificationsMenu(){
   setItems(prev=>prev.map(x=>x.id===n.id?{...x,unread:0}:x));
   if(n.unread) setUnreadCount(v=>Math.max(0,v-1));
   setOpen(false);
+  setToast(null);
+  if(n.conversation_id){
+    nav(`/mensagens?c=${encodeURIComponent(n.conversation_id)}`);
+    return;
+  }
   if(n.product_id) nav(`/produto/${n.product_id}`);
  };
 
@@ -65,23 +75,26 @@ export default function NotificationsMenu(){
   try{await api('/api/me/notifications/read-all',{method:'POST'});setItems(prev=>prev.map(x=>({...x,unread:0})));setUnreadCount(0)}catch{}
  };
 
+ const isChat=(n)=>n.type==='chat_message';
+ const iconFor=(n)=>isChat(n)?<MessageCircle/>:<Megaphone/>;
+
  return <>
   <div className="notifications-menu" ref={rootRef}>
    <button className="notification-bell" type="button" onClick={()=>setOpen(v=>!v)} aria-label="Notificações" title="Notificações">
     <Bell/>{unread>0&&<span className="notification-count">{unread>99?'99+':unread}</span>}
    </button>
    {open&&<div className="notifications-dropdown">
-    <div className="notifications-head"><div><b>Notificações</b><small>Novidades do ClassificaJá</small></div>{unread>0&&<button onClick={readAll}><CheckCheck/> Marcar lidas</button>}</div>
+    <div className="notifications-head"><div><b>Notificações</b><small>Mensagens e novidades do ClassificaJá</small></div>{unread>0&&<button onClick={readAll}><CheckCheck/> Marcar lidas</button>}</div>
     <div className="notifications-list">
      {items.length?items.map(n=><button key={n.id} className={`notification-item ${n.unread?'unread':''}`} onClick={()=>openNotification(n)}>
-      <span className="notification-icon"><Megaphone/></span>
+      <span className={`notification-icon ${isChat(n)?'chat':''}`}>{iconFor(n)}</span>
       <span className="notification-copy"><b>{n.title}</b><small>{n.body}</small><em>{new Date(n.created_at).toLocaleString('pt-BR')}</em></span>
      </button>):<div className="notifications-empty">Nenhuma notificação por enquanto.</div>}
     </div>
    </div>}
   </div>
-  {toast&&<button className="notification-toast" type="button" onClick={()=>openNotification(toast)}>
-    <Megaphone/><span><b>Novo anúncio</b><small>{toast.body}</small></span>
+  {toast&&<button className={`notification-toast ${isChat(toast)?'chat':''}`} type="button" onClick={()=>openNotification(toast)}>
+    {iconFor(toast)}<span><b>{isChat(toast)?'Nova mensagem no chat':'Novo anúncio'}</b><small>{toast.body}</small></span>
   </button>}
  </>
 }

@@ -517,6 +517,8 @@ def init_db():
         ensure_column(db, "payment_orders", "installments", "INTEGER")
         ensure_column(db, "payment_orders", "installment_source", "TEXT")
         ensure_column(db, "payment_orders", "provider_payload", "TEXT")
+        ensure_column(db, "notifications", "target_user_id", "TEXT")
+        ensure_column(db, "notifications", "conversation_id", "TEXT")
 
         categories = [
             ("Veículos", "veiculos", "🚗"),
@@ -1405,10 +1407,11 @@ def my_notifications(limit: int = 20, user=Depends(current_user)):
                FROM notifications n
                LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.user_id=?
                LEFT JOIN products p ON p.id=n.product_id
-               WHERE n.product_id IS NULL OR p.seller_id<>?
+               WHERE n.target_user_id=?
+                  OR (n.target_user_id IS NULL AND (n.product_id IS NULL OR p.seller_id<>?))
                ORDER BY n.created_at DESC
                LIMIT ?""",
-            (user["id"], user["id"], safe_limit),
+            (user["id"], user["id"], user["id"], safe_limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1421,8 +1424,10 @@ def unread_notifications_count(user=Depends(current_user)):
                FROM notifications n
                LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.user_id=?
                LEFT JOIN products p ON p.id=n.product_id
-               WHERE r.notification_id IS NULL AND (n.product_id IS NULL OR p.seller_id<>?)""",
-            (user["id"], user["id"]),
+               WHERE r.notification_id IS NULL
+                 AND (n.target_user_id=?
+                      OR (n.target_user_id IS NULL AND (n.product_id IS NULL OR p.seller_id<>?)))""",
+            (user["id"], user["id"], user["id"]),
         ).fetchone()
     return {"count": row["n"] if row else 0}
 
@@ -1430,8 +1435,20 @@ def unread_notifications_count(user=Depends(current_user)):
 @app.post("/api/me/notifications/{notification_id}/read")
 def read_notification(notification_id: str, user=Depends(current_user)):
     with conn() as db:
-        exists = db.execute("SELECT 1 FROM notifications WHERE id=?", (notification_id,)).fetchone()
-        if not exists:
+        n = db.execute(
+            """SELECT n.*, p.seller_id product_seller_id
+               FROM notifications n
+               LEFT JOIN products p ON p.id=n.product_id
+               WHERE n.id=?""",
+            (notification_id,),
+        ).fetchone()
+        if not n:
+            raise HTTPException(404, "Notificação não encontrada")
+        data = dict(n)
+        allowed = data.get("target_user_id") == user["id"] or (
+            data.get("target_user_id") is None and (data.get("product_id") is None or data.get("product_seller_id") != user["id"])
+        )
+        if not allowed:
             raise HTTPException(404, "Notificação não encontrada")
         db.execute(
             "INSERT OR IGNORE INTO notification_reads(notification_id,user_id,read_at) VALUES (?,?,?)",
@@ -1447,8 +1464,9 @@ def read_all_notifications(user=Depends(current_user)):
         rows = db.execute(
             """SELECT n.id FROM notifications n
                LEFT JOIN products p ON p.id=n.product_id
-               WHERE n.product_id IS NULL OR p.seller_id<>?""",
-            (user["id"],),
+               WHERE n.target_user_id=?
+                  OR (n.target_user_id IS NULL AND (n.product_id IS NULL OR p.seller_id<>?))""",
+            (user["id"], user["id"]),
         ).fetchall()
         now = now_iso()
         for row in rows:
@@ -1532,7 +1550,19 @@ def conversation_messages(conversation_id: str, user=Depends(current_user)):
         c = db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
         if not c or user["id"] not in {c["buyer_id"], c["seller_id"]}:
             raise HTTPException(404, "Conversa não encontrada")
-        db.execute("UPDATE messages SET read_at=? WHERE conversation_id=? AND sender_id<>? AND read_at IS NULL", (now_iso(), conversation_id, user["id"]))
+        read_at = now_iso()
+        db.execute("UPDATE messages SET read_at=? WHERE conversation_id=? AND sender_id<>? AND read_at IS NULL", (read_at, conversation_id, user["id"]))
+        pending_notifications = db.execute(
+            """SELECT n.id FROM notifications n
+               LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.user_id=?
+               WHERE n.type='chat_message' AND n.conversation_id=? AND n.target_user_id=? AND r.notification_id IS NULL""",
+            (user["id"], conversation_id, user["id"]),
+        ).fetchall()
+        for n in pending_notifications:
+            db.execute(
+                "INSERT OR IGNORE INTO notification_reads(notification_id,user_id,read_at) VALUES (?,?,?)",
+                (n["id"], user["id"], read_at),
+            )
         rows = db.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC", (conversation_id,)).fetchall()
         db.commit()
     return [dict(r) for r in rows]
@@ -1549,9 +1579,22 @@ def send_message(conversation_id: str, payload: MessageIn, user=Depends(current_
         c = db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
         if not c or user["id"] not in {c["buyer_id"], c["seller_id"]}:
             raise HTTPException(404, "Conversa não encontrada")
+        created_at = now_iso()
         mid = str(uuid.uuid4())
-        db.execute("INSERT INTO messages(id,conversation_id,sender_id,body,created_at) VALUES (?,?,?,?,?)", (mid, conversation_id, user["id"], body, now_iso()))
-        db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now_iso(), conversation_id))
+        db.execute("INSERT INTO messages(id,conversation_id,sender_id,body,created_at) VALUES (?,?,?,?,?)", (mid, conversation_id, user["id"], body, created_at))
+        db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (created_at, conversation_id))
+
+        recipient_id = c["seller_id"] if user["id"] == c["buyer_id"] else c["buyer_id"]
+        product = db.execute("SELECT id,title FROM products WHERE id=?", (c["product_id"],)).fetchone()
+        sender = db.execute("SELECT name FROM users WHERE id=?", (user["id"],)).fetchone()
+        product_title = product["title"] if product else "anúncio"
+        sender_name = sender["name"] if sender and sender["name"] else "Usuário"
+        preview = body if len(body) <= 90 else body[:87] + "..."
+        db.execute(
+            """INSERT INTO notifications(id,type,product_id,title,body,created_at,target_user_id,conversation_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (str(uuid.uuid4()), "chat_message", c["product_id"], "Nova mensagem no chat", f"{sender_name} • {product_title}: {preview}", created_at, recipient_id, conversation_id),
+        )
         db.commit()
     return {"id": mid}
 

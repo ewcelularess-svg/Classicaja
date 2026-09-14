@@ -2939,3 +2939,15 @@ button{
 .pix-test-result svg{width:18px;height:18px;flex:0 0 auto}
 .pix-test-result.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#047857}
 .pix-test-result.error{background:#fff1f2;border:1px solid #fecdd3;color:#be123c}
+
+/* V2.14.9 — notificações do chat interno */
+.notification-icon.chat{
+  background:#eff6ff!important;
+  color:#2563eb!important;
+}
+.notification-toast.chat{
+  border-color:#bfdbfe!important;
+}
+.notification-toast.chat>svg{
+  color:#2563eb!important;
+}
