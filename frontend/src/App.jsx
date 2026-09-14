@@ -23,7 +23,27 @@ function Protected({children}) {
 function AdminOnly({children}) {
   const {user, loading} = useAuth();
   if (loading) return <div className="loading">Carregando...</div>;
-  return user?.role === 'admin' ? children : <Navigate to="/" />;
+  if (!user) return <Navigate to="/entrar" />;
+  if (user.role !== 'admin') {
+    return <div className="page master-access-denied">
+      <div className="master-access-card">
+        <div className="master-access-icon">🔐</div>
+        <span className="section-kicker">PAINEL MASTER</span>
+        <h1>Acesso administrativo restrito</h1>
+        <p>Esta conta está conectada, mas ainda não possui permissão de administrador.</p>
+        <p className="master-access-email">Conta atual: <b>{user.email}</b></p>
+        <NavigateFallback/>
+      </div>
+    </div>;
+  }
+  return children;
+}
+
+function NavigateFallback(){
+  return <div className="master-access-actions">
+    <a className="secondary-btn" href="/">Voltar ao site</a>
+    <a className="primary" href="/entrar">Entrar com outra conta</a>
+  </div>;
 }
 export default function App(){
   return <div className="app"><Header/><main><Routes>

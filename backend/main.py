@@ -419,6 +419,13 @@ def init_db():
                     "INSERT INTO users(id,name,email,phone,password_salt,password_hash,created_at,role,verified,status) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), os.getenv("ADMIN_NAME", "Administrador"), admin_email, os.getenv("ADMIN_PHONE", ""), salt, pwhash, now_iso(), "admin", 1, "active"),
                 )
+            else:
+                # Se o e-mail administrativo já existia como usuário comum,
+                # promove a mesma conta sem trocar a senha cadastrada pelo usuário.
+                db.execute(
+                    "UPDATE users SET role='admin', verified=1, status='active' WHERE email=?",
+                    (admin_email,),
+                )
 
         if SEED_DEMO_DATA:
             admin_id = "demo-admin"

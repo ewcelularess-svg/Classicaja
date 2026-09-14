@@ -2137,3 +2137,13 @@ img,svg{max-width:100%}
  .master-admin-tabs button{padding:0 11px;font-size:12px}
  .master-plan-card{padding:16px}
 }
+
+/* V2.13.1 — acesso Master explícito */
+.master-access-denied{display:grid;place-items:center;min-height:calc(100vh - 160px)}
+.master-access-card{width:min(620px,100%);padding:38px;border:1px solid var(--line);border-radius:26px;background:#fff;box-shadow:var(--shadow);text-align:center}
+.master-access-icon{font-size:44px;margin-bottom:12px}
+.master-access-card h1{margin:8px 0 12px;font-size:30px}
+.master-access-card p{color:var(--muted);line-height:1.6}
+.master-access-email{padding:12px 14px;background:#f8fafc;border-radius:12px}
+.master-access-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
+@media(max-width:700px){.master-access-card{padding:26px 18px}.master-access-card h1{font-size:24px}.master-access-actions>*{width:100%;justify-content:center}}

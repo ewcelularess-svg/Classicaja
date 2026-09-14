@@ -51,7 +51,7 @@ export default function Header(){
         {user ? <>
           <Link className="header-action" title="Meu painel" to="/painel"><UserCircle/><span>Meu painel</span></Link>
           <Link className="publish-premium" to="/publicar"><Plus/> <span>Anunciar</span></Link>
-          {user.role==='admin'&&<Link className="header-action admin-header-action" title="Administração" to="/admin"><ShieldCheck/><span>Admin</span></Link>}
+          {user.role==='admin'&&<Link className="header-action admin-header-action" title="Administração" to="/admin"><ShieldCheck/><span>Master</span></Link>}
           <button className="icon-btn logout-premium" title="Sair" onClick={()=>{logout();nav('/')}}><LogOut/></button>
         </> : <>
           <Link className="header-action login-premium" to="/entrar"><UserCircle/><span>Entrar</span></Link>
