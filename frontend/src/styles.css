@@ -2823,3 +2823,39 @@ button{
     gap:5px!important;
   }
 }
+
+
+/* V2.14.6 — botão anunciar mobile + ver senha no cadastro/login */
+.password-field{position:relative;display:flex;align-items:center}
+.password-field input{padding-right:48px!important}
+.password-toggle{position:absolute;right:10px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:#64748b;width:32px;height:32px;display:grid;place-items:center;border-radius:10px}
+.password-toggle:hover{background:#f8fafc;color:#111827}
+.password-toggle svg{width:18px;height:18px}
+
+@media (max-width:900px){
+  .publish-premium{
+    width:auto!important;
+    min-width:108px!important;
+    padding:0 12px!important;
+    height:40px!important;
+    gap:6px!important;
+    border-radius:12px!important;
+    box-shadow:0 8px 18px rgba(225,29,72,.17)!important;
+  }
+  .publish-premium span{
+    display:inline!important;
+    font-size:12px!important;
+    font-weight:800!important;
+    color:#fff!important;
+    white-space:nowrap!important;
+  }
+  .publish-premium svg{width:18px!important;height:18px!important}
+}
+
+@media (max-width:520px){
+  .publish-premium{
+    min-width:104px!important;
+    padding:0 11px!important;
+  }
+  .auth-card{padding:22px 14px 24px!important}
+}
