@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Check, ChevronRight, MapPin, Search, ShieldCheck, Sparkles, Tag, Users, X} from 'lucide-react';
+import {Check, ChevronRight, Handshake, MapPin, Search, ShieldCheck, Sparkles, Tag, Users, X} from 'lucide-react';
 import {Link, useSearchParams} from 'react-router-dom';
 import {api, imageUrl} from '../lib/api';
 import ProductCard from '../components/ProductCard';
@@ -13,6 +13,7 @@ const rows = [
   {label:'Melhor posição no catálogo', values:[false,true,true]},
   {label:'Mais visualizações no catálogo', values:[false,false,true]},
   {label:'Maior exposição entre anúncios', values:[false,false,true]},
+  {label:'Vitrine de parceiros', values:['Não','Rotativa','Prioridade']},
 ];
 
 function tierClass(index,total){
@@ -33,6 +34,8 @@ export default function Home(){
  const [categories,setCategories]=useState([]);
  const [stats,setStats]=useState({products:0,sellers:0,cities:0});
  const [plans,setPlans]=useState([]);
+ const [partnerTop,setPartnerTop]=useState([]);
+ const [partnerEnd,setPartnerEnd]=useState([]);
  const [q,setQ]=useState(searchParams.get('q')||'');
  const [cat,setCat]=useState(searchParams.get('category')||'');
  const [sort,setSort]=useState('newest');
@@ -50,6 +53,8 @@ export default function Home(){
    api('/api/categories').then(setCategories);
    api('/api/public/stats').then(setStats).catch(()=>{});
    api('/api/plans').then(setPlans).catch(()=>setPlans([]));
+   api('/api/partner-ads?placement=home_top&limit=1').then(setPartnerTop).catch(()=>setPartnerTop([]));
+   api('/api/partner-ads?placement=feed_end&limit=3').then(setPartnerEnd).catch(()=>setPartnerEnd([]));
  },[]);
 
  useEffect(()=>{
@@ -174,6 +179,13 @@ export default function Home(){
     <div className="category-grid premium-category-grid">{categories.map(c=><button key={c.slug} className={`category-card ${cat===c.slug?'active':''}`} onClick={()=>chooseCategory(c.slug)}><span>{c.icon}</span><b>{c.name}</b></button>)}</div>
   </section>
 
+  {partnerTop.length>0 && <section className="section partner-top-section" aria-label="Publicidade de parceiro">
+    {partnerTop.map(ad=>{
+      const content=<><div className="partner-top-copy"><span className="partner-sponsored-label"><Handshake/> PARCEIRO CLASSIFICAJÁ</span><strong>{ad.company_name}</strong><h3>{ad.title}</h3>{ad.subtitle&&<p>{ad.subtitle}</p>}<span className="partner-learn-more">Conhecer parceiro <ChevronRight/></span></div>{ad.image_url&&<div className="partner-top-image"><img src={ad.image_url} alt={ad.company_name}/></div>}</>;
+      return ad.target_url?<a key={ad.id} className="partner-top-banner" href={ad.target_url} target="_blank" rel="noreferrer sponsored">{content}</a>:<div key={ad.id} className="partner-top-banner">{content}</div>
+    })}
+  </section>}
+
   {featured.length>0 && <section className="section dark-section"><div className="section-head light"><div><span className="section-kicker">PATROCINADOS</span><h2>Anúncios em destaque</h2></div></div><div className="horizontal-cards">{featured.map(p=><ProductCard key={p.id} p={p}/>)}</div></section>}
 
   {plans.length>0 && <section className="section plans-highlight-section" id="planos">
@@ -239,8 +251,16 @@ export default function Home(){
   <section className="section infinite-feed-section" id="produtos"><div className="section-head"><div><span className="section-kicker">FEED DE ANÚNCIOS</span><h2>Produtos</h2></div><select value={sort} onChange={e=>setSort(e.target.value)}><option value="newest">Mais recentes</option><option value="price_low">Menor preço</option><option value="price_high">Maior preço</option><option value="popular">Mais vistos</option></select></div>
    {products.length ? <>
      <div className="product-grid infinite-product-grid">{products.map(p=><ProductCard key={p.id} p={p}/>)}</div>
-     <div ref={feedEndRef} className="feed-loader">{loadingProducts?<><span className="feed-spinner"/> Carregando mais anúncios...</>:hasMore?'Role para ver mais anúncios':'Você chegou ao fim dos anúncios.'}</div>
+     <div ref={feedEndRef} className="feed-loader">{loadingProducts?<><span className="feed-spinner"/> Carregando mais anúncios...</>:hasMore?'Role para ver mais anúncios':'Você viu todos os anúncios disponíveis no momento.'}</div>
    </> : loadingProducts ? <div className="feed-loader"><span className="feed-spinner"/> Carregando anúncios...</div> : <div className="empty"><div>🛍️</div><h3>Nenhum anúncio encontrado</h3><p>Altere os filtros ou publique o primeiro anúncio nesta região.</p></div>}
+
+   {partnerEnd.length>0 && <div className="partner-end-block">
+     <div className="partner-end-head"><div><span className="section-kicker">PARCEIROS DO CLASSIFICAJÁ</span><h3>Marcas que ajudam a movimentar negócios locais</h3></div><span className="partner-ad-note">Publicidade</span></div>
+     <div className="partner-end-grid">{partnerEnd.map(ad=>{
+       const card=<>{ad.image_url?<div className="partner-card-image"><img src={ad.image_url} alt={ad.company_name}/></div>:<div className="partner-card-placeholder"><Handshake/></div>}<div className="partner-card-copy"><small>PARCEIRO</small><b>{ad.company_name}</b><strong>{ad.title}</strong>{ad.subtitle&&<p>{ad.subtitle}</p>}</div></>;
+       return ad.target_url?<a key={ad.id} className="partner-card" href={ad.target_url} target="_blank" rel="noreferrer sponsored">{card}</a>:<div key={ad.id} className="partner-card">{card}</div>
+     })}</div>
+   </div>}
   </section>
  </>
 }
