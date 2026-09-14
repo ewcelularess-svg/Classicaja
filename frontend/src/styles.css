@@ -3851,3 +3851,79 @@ button{
   .partner-benefit-locked{align-items:flex-start;flex-wrap:wrap}
   .partner-benefit-locked>.primary{width:100%}
 }
+
+/* =========================================================
+   V2.15.7 — PARCERIA HERO: IMAGEM PREENCHENDO O BLOCO
+   ========================================================= */
+.partner-spot-hero{
+  grid-template-columns:minmax(0,1.18fr) minmax(360px,.82fr)!important;
+  height:300px!important;
+  min-height:300px!important;
+  max-height:300px!important;
+  align-items:stretch!important;
+}
+.partner-spot-hero .partner-spot-copy{
+  min-width:0!important;
+  height:100%!important;
+  padding:30px 34px!important;
+  overflow:hidden!important;
+}
+.partner-spot-hero .partner-spot-image{
+  order:2!important;
+  width:100%!important;
+  min-width:0!important;
+  height:100%!important;
+  min-height:0!important;
+  overflow:hidden!important;
+  background:#0f172a!important;
+  border-left:1px solid rgba(255,255,255,.08)!important;
+}
+.partner-spot-hero .partner-spot-image img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  min-width:100%!important;
+  min-height:100%!important;
+  object-fit:cover!important;
+  object-position:center!important;
+  margin:0!important;
+  padding:0!important;
+  background:transparent!important;
+}
+
+@media (max-width:1000px){
+  .partner-spot-hero{
+    grid-template-columns:minmax(0,1fr) minmax(300px,.78fr)!important;
+    height:270px!important;
+    min-height:270px!important;
+    max-height:270px!important;
+  }
+  .partner-spot-hero .partner-spot-copy{
+    padding:24px 26px!important;
+  }
+}
+
+@media (max-width:760px){
+  .partner-spot-hero{
+    display:grid!important;
+    grid-template-columns:1fr!important;
+    grid-template-rows:170px auto!important;
+    height:auto!important;
+    min-height:0!important;
+    max-height:none!important;
+  }
+  .partner-spot-hero .partner-spot-image{
+    order:-1!important;
+    height:170px!important;
+    min-height:170px!important;
+    border-left:0!important;
+    border-bottom:1px solid rgba(255,255,255,.08)!important;
+  }
+  .partner-spot-hero .partner-spot-copy{
+    height:auto!important;
+    padding:18px 18px 20px!important;
+  }
+  .partner-spot-hero .partner-spot-copy>strong{
+    font-size:21px!important;
+  }
+}
