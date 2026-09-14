@@ -3782,3 +3782,72 @@ button{
   .hero-slider-arrow{width:32px;height:32px}
   .hero-slider-arrow svg{width:17px;height:17px}
 }
+
+/* =========================================================
+   V2.15.6 — PARCERIA SELF-SERVICE NO PAINEL DO USUÁRIO
+   ========================================================= */
+.my-partner-section{margin-top:34px}
+.my-partner-section>.section-head>svg{width:34px;height:34px;color:var(--brand)}
+.my-partner-panel{
+  border:1px solid #e5e7eb;
+  border-radius:24px;
+  background:#fff;
+  padding:22px;
+  box-shadow:0 12px 34px rgba(15,23,42,.05);
+}
+.my-partner-panel.tier-plus{border-color:#fed7aa;background:linear-gradient(180deg,#fff,#fffaf4)}
+.my-partner-panel.tier-premium{border-color:#fecdd3;background:linear-gradient(180deg,#fff,#fff5f7)}
+.partner-benefit-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding-bottom:18px;border-bottom:1px solid #eef2f7}
+.partner-benefit-summary small{display:block;color:#64748b;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+.partner-benefit-summary h3{margin:4px 0 6px;font-size:26px}
+.partner-benefit-summary p{margin:0;color:#64748b;max-width:720px;line-height:1.55}
+.partner-usage{min-width:190px;border:1px solid #e5e7eb;background:#fff;border-radius:18px;padding:15px;text-align:center;display:grid;gap:4px}
+.partner-usage b{font-size:28px;line-height:1;color:#111827}
+.partner-usage span{font-size:11px;color:#64748b}
+.partner-usage em{font-size:11px;font-style:normal;font-weight:800;color:var(--brand)}
+.partner-slot-list{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 20px}
+.partner-slot-list span{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:7px 10px;border-radius:999px;background:#f8fafc;border:1px solid #e2e8f0;font-size:11px;font-weight:700;color:#334155}
+.partner-slot-list svg{color:#16a34a}
+.my-partner-form{display:grid;gap:14px;border-top:1px solid #eef2f7;padding-top:20px}
+.my-partner-form label{display:grid;gap:7px;font-size:12px;font-weight:800;color:#374151}
+.my-partner-form input{width:100%;min-height:44px;border:1px solid #dbe1e8;border-radius:12px;padding:0 12px;background:#fff;outline:0}
+.my-partner-form input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(225,29,72,.08)}
+.partner-field-icon{position:relative;display:flex;align-items:center}
+.partner-field-icon>svg{position:absolute;left:12px;width:16px;color:#64748b}
+.partner-field-icon input{padding-left:38px}
+.partner-upload-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px;border:1px dashed #cbd5e1;border-radius:16px;background:#fff}
+.partner-user-upload{display:inline-flex!important;align-items:center;justify-content:center;gap:8px!important;min-height:44px;padding:0 14px;border:1px solid #dbe1e8;border-radius:12px;background:#fff;cursor:pointer}
+.partner-user-upload input{display:none}
+.partner-user-upload svg{width:18px;color:var(--brand)}
+.partner-user-preview{width:120px;height:70px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#fff}
+.partner-user-preview img{width:100%;height:100%;object-fit:contain}
+.partner-upload-row>.primary{margin-left:auto}
+.partner-limit-note{display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-size:12px;font-weight:700}
+.partner-limit-note svg{width:17px;flex:0 0 auto}
+.my-partner-list{display:grid;gap:10px;margin-top:18px;padding-top:18px;border-top:1px solid #eef2f7}
+.my-partner-item{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;border:1px solid #e5e7eb;border-radius:16px;padding:10px;background:#fff}
+.my-partner-thumb{width:76px;height:58px;border-radius:12px;background:#f8fafc;overflow:hidden;display:grid;place-items:center;color:#94a3b8}
+.my-partner-thumb img{width:100%;height:100%;object-fit:contain}
+.my-partner-item>div:nth-child(2){display:grid;gap:3px;min-width:0}
+.my-partner-item b{font-size:13px}
+.my-partner-item span{font-size:12px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.my-partner-item small{font-size:10px;color:#94a3b8}
+.partner-ended{font-size:11px;font-weight:800;color:#94a3b8}
+.partner-benefit-locked{display:flex;align-items:center;gap:16px;border:1px dashed #cbd5e1;border-radius:22px;padding:20px;background:#f8fafc}
+.partner-benefit-locked>div{flex:1}
+.partner-benefit-locked h3{margin:0 0 5px}
+.partner-benefit-locked p{margin:0;color:#64748b;line-height:1.5}
+@media(max-width:850px){
+  .partner-benefit-summary{display:grid}
+  .partner-usage{min-width:0;width:100%;text-align:left;grid-template-columns:auto 1fr auto;align-items:center}
+  .partner-usage b{font-size:24px}
+  .partner-upload-row{align-items:stretch}
+  .partner-upload-row>.primary{margin-left:0;width:100%}
+  .partner-user-upload{width:100%}
+  .partner-user-preview{width:100%;height:140px}
+  .my-partner-item{grid-template-columns:64px 1fr}
+  .my-partner-thumb{width:64px;height:54px}
+  .my-partner-item>.danger-lite-btn,.my-partner-item>.partner-ended{grid-column:1/-1;justify-content:center}
+  .partner-benefit-locked{align-items:flex-start;flex-wrap:wrap}
+  .partner-benefit-locked>.primary{width:100%}
+}

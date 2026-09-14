@@ -129,7 +129,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.16.0")
+app = FastAPI(title="ClassificaJá API", version="2.16.1")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -300,6 +300,32 @@ async def save_product_image(image: UploadFile):
             raise HTTPException(502, f"Falha ao enviar imagem ao Supabase Storage: {response.text[:180]}")
         return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
     local_name = Path(filename).name
+    (UPLOAD_DIR / local_name).write_bytes(content)
+    return f"/uploads/{local_name}"
+
+
+async def save_partner_image(image: UploadFile):
+    ext = Path(image.filename or "partner.jpg").suffix.lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(400, "Formato de imagem não suportado. Use JPG, PNG ou WEBP")
+    content = await image.read()
+    if len(content) > 7 * 1024 * 1024:
+        raise HTTPException(400, "Imagem maior que 7 MB")
+    filename = f"partners/{uuid.uuid4().hex}{ext}"
+    if USE_SUPABASE_STORAGE:
+        import httpx
+        headers = {
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
+            "Content-Type": image.content_type or "image/jpeg",
+            "x-upsert": "false",
+        }
+        url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
+        response = httpx.post(url, headers=headers, content=content, timeout=30)
+        if response.status_code >= 300:
+            raise HTTPException(502, f"Falha ao enviar imagem da parceria: {response.text[:180]}")
+        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+    local_name = f"partner_{uuid.uuid4().hex}{ext}"
     (UPLOAD_DIR / local_name).write_bytes(content)
     return f"/uploads/{local_name}"
 
@@ -503,10 +529,21 @@ def init_db():
             image_url TEXT,
             target_url TEXT,
             placement TEXT NOT NULL DEFAULT 'both',
+            plan_tier TEXT NOT NULL DEFAULT 'free',
             active INTEGER NOT NULL DEFAULT 1,
+            owner_user_id TEXT,
+            source TEXT NOT NULL DEFAULT 'admin',
+            expires_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""")
+        ensure_column(db, "partner_ads", "plan_tier", "TEXT NOT NULL DEFAULT 'free'")
+        ensure_column(db, "partner_ads", "owner_user_id", "TEXT")
+        ensure_column(db, "partner_ads", "source", "TEXT NOT NULL DEFAULT 'admin'")
+        ensure_column(db, "partner_ads", "expires_at", "TEXT")
+        # Migração dos anúncios de parceria antigos: quem já estava no topo mantém nível Premium.
+        db.execute("UPDATE partner_ads SET plan_tier='premium' WHERE placement IN ('home_top','both') AND plan_tier='free'")
+        db.execute("UPDATE partner_ads SET placement='auto' WHERE placement IN ('home_top','feed_end','both')")
         db.execute("""CREATE TABLE IF NOT EXISTS publish_plan_access (
             user_id TEXT PRIMARY KEY,
             plan_code TEXT NOT NULL,
@@ -608,13 +645,20 @@ def init_db():
                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (str(uuid.uuid4()), demo_id, title, "Produto demonstrativo do ClassificaJá. Entre em contato com o vendedor para combinar detalhes.", price, cat, city, state, neighborhood, condition, None, featured, views, "active", now_iso(), now_iso()),
                     )
-        # partner plan benefit migration: preserve Master edits and append the new benefit only when absent.
-        partner_benefits = {
-            "boost_7": (None, "Sem participação na vitrine de parceiros"),
-            "boost_15": ("Elegível para vitrine rotativa de parceiros", None),
-            "boost_30": ("Prioridade na vitrine de parceiros e maior exposição da marca", None),
+        # Parcerias são benefício exclusivo dos planos Plus e Premium.
+        legacy_partner_texts = {
+            "Sem participação na vitrine de parceiros",
+            "1 campanha de parceria por mês em posições Plus",
+            "Até 2 campanhas de parceria por mês com prioridade Premium",
+            "Parceria básica: exibição em áreas de menor destaque (fim do feed e rodapé de anúncios)",
+            "Parceria Plus: presença no feed e em áreas intermediárias das páginas de anúncios",
+            "Parceria Premium: prioridade máxima após categorias e nas áreas nobres das páginas de anúncios",
         }
-        for plan_code, (feature_text, limitation_text) in partner_benefits.items():
+        partner_benefits = {
+            "boost_15": "Parceria Plus: 1 campanha por mês no feed e em áreas intermediárias das páginas de anúncios",
+            "boost_30": "Parceria Premium: até 2 campanhas por mês com prioridade máxima após categorias e nas áreas nobres das páginas de anúncios",
+        }
+        for plan_code in ("boost_7", "boost_15", "boost_30"):
             row = db.execute("SELECT features_json,limitations_json FROM plan_settings WHERE code=?", (plan_code,)).fetchone()
             if not row:
                 continue
@@ -626,14 +670,22 @@ def init_db():
                 limitations = json.loads(row["limitations_json"] or "[]")
             except Exception:
                 limitations = []
-            changed = False
-            if feature_text and feature_text not in features:
-                features.append(feature_text); changed = True
-            if limitation_text and limitation_text not in limitations:
-                limitations.append(limitation_text); changed = True
-            if changed:
-                db.execute("UPDATE plan_settings SET features_json=?,limitations_json=?,updated_at=? WHERE code=?", (json.dumps(features, ensure_ascii=False), json.dumps(limitations, ensure_ascii=False), now_iso(), plan_code))
+            features = [x for x in features if x not in legacy_partner_texts and not str(x).startswith("Parceria ")]
+            limitations = [x for x in limitations if x not in legacy_partner_texts and not str(x).startswith("Parceria ")]
+            if plan_code == "boost_7":
+                limitation = "Sem participação em espaços de parceria"
+                if limitation not in limitations:
+                    limitations.append(limitation)
+            else:
+                features.append(partner_benefits[plan_code])
+            db.execute(
+                "UPDATE plan_settings SET features_json=?,limitations_json=?,updated_at=? WHERE code=?",
+                (json.dumps(features, ensure_ascii=False), json.dumps(limitations, ensure_ascii=False), now_iso(), plan_code),
+            )
 
+        # Regra comercial: anúncios de parceria antigos vinculados ao nível grátis/básico
+        # deixam de ser exibidos. Permanecem salvos no Master apenas para revisão/migração.
+        db.execute("UPDATE partner_ads SET active=0,updated_at=? WHERE plan_tier='free' AND active=1", (now_iso(),))
         db.commit()
         ensure_supabase_bucket()
 
@@ -709,8 +761,17 @@ class PartnerAdIn(BaseModel):
     subtitle: Optional[str] = ""
     image_url: Optional[str] = ""
     target_url: Optional[str] = ""
-    placement: str = "both"
+    placement: str = "auto"
+    plan_tier: str = "plus"
     active: bool = True
+
+
+class MyPartnerAdIn(BaseModel):
+    company_name: str
+    title: str
+    subtitle: Optional[str] = ""
+    image_url: Optional[str] = ""
+    target_url: Optional[str] = ""
 
 
 PLANS = {
@@ -744,7 +805,7 @@ PLANS = {
             "Prioridade maior nas buscas",
             "15 dias em evidência",
             "Melhor posição no catálogo",
-            "Elegível para vitrine rotativa de parceiros"
+            "1 campanha de parceria por mês em posições Plus"
         ],
         "limitations": []
     },
@@ -762,7 +823,7 @@ PLANS = {
             "30 dias de destaque premium",
             "Mais visualizações no catálogo",
             "Maior exposição entre os anúncios",
-            "Prioridade na vitrine de parceiros e maior exposição da marca"
+            "Até 2 campanhas de parceria por mês com prioridade Premium"
         ],
         "limitations": []
     },
@@ -1027,15 +1088,46 @@ def public_stats():
     return {"products": products, "sellers": sellers, "cities": cities}
 
 
+PARTNER_SLOT_TIERS = {
+    # Premium: todas as áreas, inclusive as posições mais nobres.
+    "home_top": ("premium",),
+    "product_top": ("premium",),
+    # Plus também aparece em áreas intermediárias.
+    "product_mid": ("premium", "plus"),
+    # Final do feed e rodapé do anúncio: somente Plus e Premium.
+    "feed_end": ("premium", "plus"),
+    "product_end": ("premium", "plus"),
+}
+
+
 @app.get("/api/partner-ads")
-def public_partner_ads(placement: str = "both", limit: int = 6):
-    placement = (placement or "both").strip().lower()
+def public_partner_ads(slot: str = "feed_end", placement: str = "", limit: int = 6):
+    # placement é mantido como alias para versões antigas do frontend.
+    slot = (slot or placement or "feed_end").strip().lower()
+    if slot == "both":
+        slot = "feed_end"
+    tiers = PARTNER_SLOT_TIERS.get(slot)
+    if not tiers:
+        raise HTTPException(400, "Posição de parceria inválida")
     limit = max(1, min(int(limit or 6), 12))
+    placeholders = ",".join("?" for _ in tiers)
+    tier_order = "CASE plan_tier WHEN 'premium' THEN 3 WHEN 'plus' THEN 2 ELSE 1 END"
     with conn() as db:
-        if placement == "both":
-            rows = db.execute("SELECT * FROM partner_ads WHERE active=1 ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
-        else:
-            rows = db.execute("SELECT * FROM partner_ads WHERE active=1 AND (placement=? OR placement='both') ORDER BY updated_at DESC LIMIT ?", (placement, limit)).fetchall()
+        now = now_iso()
+        rows = db.execute(
+            f"""SELECT * FROM partner_ads
+                WHERE active=1
+                  AND plan_tier IN ({placeholders})
+                  AND (expires_at IS NULL OR expires_at>?)
+                  AND (source<>'user' OR EXISTS (
+                    SELECT 1 FROM products p
+                    WHERE p.seller_id=partner_ads.owner_user_id
+                      AND p.featured=1 AND p.featured_until>?
+                      AND p.boost_level >= CASE partner_ads.plan_tier WHEN 'premium' THEN 3 ELSE 2 END
+                  ))
+                ORDER BY {tier_order} DESC, RANDOM() LIMIT ?""",
+            (*tiers, now, now, limit),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -2360,26 +2452,172 @@ def payment_integration_view(row):
     }
 
 
+PARTNER_SELF_SERVICE_RULES = {
+    "plus": {
+        "monthly_limit": 1,
+        "label": "Plus",
+        "slots": [
+            {"code": "product_mid", "label": "Após a descrição nas páginas de anúncios"},
+            {"code": "feed_end", "label": "Final do feed de anúncios"},
+            {"code": "product_end", "label": "Rodapé das páginas de anúncios"},
+        ],
+    },
+    "premium": {
+        "monthly_limit": 2,
+        "label": "Premium",
+        "slots": [
+            {"code": "home_top", "label": "Após Categorias na página inicial"},
+            {"code": "product_top", "label": "Área nobre da página do anúncio"},
+            {"code": "product_mid", "label": "Após a descrição nas páginas de anúncios"},
+            {"code": "feed_end", "label": "Final do feed com prioridade"},
+            {"code": "product_end", "label": "Rodapé das páginas de anúncios"},
+        ],
+    },
+}
+
+
+def partner_access_for_user(db, user_id: str):
+    rows = db.execute(
+        """SELECT id,title,boost_level,featured_until FROM products
+           WHERE seller_id=? AND featured=1 AND featured_until IS NOT NULL AND featured_until>? AND boost_level>=2
+           ORDER BY boost_level DESC, featured_until DESC""",
+        (user_id, now_iso()),
+    ).fetchall()
+    if not rows:
+        return {
+            "eligible": False, "tier": None, "plan_name": "Grátis", "monthly_limit": 0,
+            "used_this_month": 0, "remaining": 0, "slots": [], "active_until": None, "ads": []
+        }
+    top = dict(rows[0])
+    tier = "premium" if int(top.get("boost_level") or 0) >= 3 else "plus"
+    rule = PARTNER_SELF_SERVICE_RULES[tier]
+    active_until = top.get("featured_until")
+    month_prefix = now_dt().strftime("%Y-%m") + "%"
+    used = db.execute(
+        "SELECT COUNT(*) n FROM partner_ads WHERE owner_user_id=? AND source='user' AND created_at LIKE ?",
+        (user_id, month_prefix),
+    ).fetchone()["n"]
+    ads = db.execute(
+        "SELECT * FROM partner_ads WHERE owner_user_id=? AND source='user' ORDER BY created_at DESC LIMIT 12",
+        (user_id,),
+    ).fetchall()
+    return {
+        "eligible": True,
+        "tier": tier,
+        "plan_name": rule["label"],
+        "monthly_limit": rule["monthly_limit"],
+        "used_this_month": int(used or 0),
+        "remaining": max(0, rule["monthly_limit"] - int(used or 0)),
+        "slots": rule["slots"],
+        "active_until": active_until,
+        "ads": [dict(r) for r in ads],
+    }
+
+
+@app.get("/api/me/partner-benefit")
+def my_partner_benefit(user=Depends(current_user)):
+    with conn() as db:
+        return partner_access_for_user(db, user["id"])
+
+
+@app.post("/api/me/partner-ads/image")
+async def my_partner_ad_image(image: UploadFile = File(...), user=Depends(current_user)):
+    with conn() as db:
+        access = partner_access_for_user(db, user["id"])
+    if not access["eligible"]:
+        raise HTTPException(403, "Parcerias estão disponíveis somente para planos Plus ou Premium ativos")
+    if access["remaining"] <= 0:
+        raise HTTPException(403, "Você já utilizou o limite de campanhas de parceria deste mês")
+    image_url = await save_partner_image(image)
+    return {"image_url": image_url}
+
+
+@app.post("/api/me/partner-ads")
+def my_create_partner_ad(payload: MyPartnerAdIn, user=Depends(current_user)):
+    company = payload.company_name.strip()
+    title = payload.title.strip()
+    if not company or not title:
+        raise HTTPException(400, "Empresa e título são obrigatórios")
+    image_url = (payload.image_url or "").strip()
+    target_url = (payload.target_url or "").strip()
+    if not image_url:
+        raise HTTPException(400, "Adicione uma imagem para a parceria")
+    if image_url.startswith("/uploads/"):
+        pass
+    elif urlparse(image_url).scheme not in {"http", "https"}:
+        raise HTTPException(400, "A URL da imagem precisa usar http ou https")
+    if target_url and urlparse(target_url).scheme not in {"http", "https"}:
+        raise HTTPException(400, "O link de destino precisa usar http ou https")
+    with conn() as db:
+        access = partner_access_for_user(db, user["id"])
+        if not access["eligible"]:
+            raise HTTPException(403, "Seu plano atual não inclui publicação de parceria")
+        if access["remaining"] <= 0:
+            raise HTTPException(403, "Limite mensal de campanhas atingido. Aguarde o próximo mês ou faça upgrade.")
+        tier = access["tier"]
+        plan_until = None
+        try:
+            plan_until = datetime.fromisoformat(access["active_until"]) if access.get("active_until") else None
+        except Exception:
+            plan_until = None
+        max_until = now_dt() + timedelta(days=30)
+        expires_dt = min(plan_until, max_until) if plan_until else max_until
+        ad_id = str(uuid.uuid4())
+        now = now_iso()
+        db.execute(
+            """INSERT INTO partner_ads(id,company_name,title,subtitle,image_url,target_url,placement,plan_tier,active,owner_user_id,source,expires_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (ad_id, company, title, (payload.subtitle or "").strip(), image_url, target_url, "auto", tier, 1, user["id"], "user", expires_dt.isoformat(), now, now),
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM partner_ads WHERE id=?", (ad_id,)).fetchone()
+    return dict(row)
+
+
+@app.delete("/api/me/partner-ads/{ad_id}")
+def my_deactivate_partner_ad(ad_id: str, user=Depends(current_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM partner_ads WHERE id=? AND owner_user_id=? AND source='user'", (ad_id, user["id"])).fetchone()
+        if not row:
+            raise HTTPException(404, "Parceria não encontrada")
+        db.execute("UPDATE partner_ads SET active=0,updated_at=? WHERE id=?", (now_iso(), ad_id))
+        db.commit()
+    return {"ok": True}
+
+
 @app.get("/api/admin/partner-ads")
 def admin_partner_ads(user=Depends(admin_user)):
     with conn() as db:
-        rows = db.execute("SELECT * FROM partner_ads ORDER BY created_at DESC").fetchall()
+        rows = db.execute("SELECT * FROM partner_ads ORDER BY CASE plan_tier WHEN 'premium' THEN 3 WHEN 'plus' THEN 2 ELSE 1 END DESC, created_at DESC").fetchall()
     return [dict(r) for r in rows]
+
+
+@app.post("/api/admin/partner-ads/image")
+async def admin_partner_ad_image(image: UploadFile = File(...), user=Depends(admin_user)):
+    image_url = await save_partner_image(image)
+    return {"image_url": image_url}
+
+
+def normalize_partner_tier(value: str | None):
+    tier = (value or "plus").strip().lower()
+    aliases = {"plus": "plus", "premium": "premium"}
+    tier = aliases.get(tier, tier)
+    if tier not in {"plus", "premium"}:
+        raise HTTPException(400, "Parcerias estão disponíveis somente nos planos Plus e Premium")
+    return tier
 
 
 @app.post("/api/admin/partner-ads")
 def admin_create_partner_ad(payload: PartnerAdIn, user=Depends(admin_user)):
-    placement = (payload.placement or "both").strip().lower()
-    if placement not in {"home_top", "feed_end", "both"}:
-        raise HTTPException(400, "Posicionamento inválido")
+    tier = normalize_partner_tier(payload.plan_tier)
     if not payload.company_name.strip() or not payload.title.strip():
         raise HTTPException(400, "Empresa e título são obrigatórios")
     ad_id = str(uuid.uuid4())
     now = now_iso()
     with conn() as db:
         db.execute(
-            "INSERT INTO partner_ads(id,company_name,title,subtitle,image_url,target_url,placement,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (ad_id,payload.company_name.strip(),payload.title.strip(),(payload.subtitle or "").strip(),(payload.image_url or "").strip(),(payload.target_url or "").strip(),placement,1 if payload.active else 0,now,now),
+            "INSERT INTO partner_ads(id,company_name,title,subtitle,image_url,target_url,placement,plan_tier,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (ad_id,payload.company_name.strip(),payload.title.strip(),(payload.subtitle or "").strip(),(payload.image_url or "").strip(),(payload.target_url or "").strip(),"auto",tier,1 if payload.active else 0,now,now),
         )
         db.commit()
         row = db.execute("SELECT * FROM partner_ads WHERE id=?", (ad_id,)).fetchone()
@@ -2388,26 +2626,36 @@ def admin_create_partner_ad(payload: PartnerAdIn, user=Depends(admin_user)):
 
 @app.put("/api/admin/partner-ads/{ad_id}")
 def admin_update_partner_ad(ad_id: str, payload: PartnerAdIn, user=Depends(admin_user)):
-    placement = (payload.placement or "both").strip().lower()
-    if placement not in {"home_top", "feed_end", "both"}:
-        raise HTTPException(400, "Posicionamento inválido")
+    tier = normalize_partner_tier(payload.plan_tier)
     with conn() as db:
-        if not db.execute("SELECT 1 FROM partner_ads WHERE id=?", (ad_id,)).fetchone():
+        current = db.execute("SELECT * FROM partner_ads WHERE id=?", (ad_id,)).fetchone()
+        if not current:
             raise HTTPException(404, "Parceria não encontrada")
+        old_image = current["image_url"]
+        new_image = (payload.image_url or "").strip()
         db.execute(
-            "UPDATE partner_ads SET company_name=?,title=?,subtitle=?,image_url=?,target_url=?,placement=?,active=?,updated_at=? WHERE id=?",
-            (payload.company_name.strip(),payload.title.strip(),(payload.subtitle or "").strip(),(payload.image_url or "").strip(),(payload.target_url or "").strip(),placement,1 if payload.active else 0,now_iso(),ad_id),
+            "UPDATE partner_ads SET company_name=?,title=?,subtitle=?,image_url=?,target_url=?,placement='auto',plan_tier=?,active=?,updated_at=? WHERE id=?",
+            (payload.company_name.strip(),payload.title.strip(),(payload.subtitle or "").strip(),new_image,(payload.target_url or "").strip(),tier,1 if payload.active else 0,now_iso(),ad_id),
         )
         db.commit()
         row = db.execute("SELECT * FROM partner_ads WHERE id=?", (ad_id,)).fetchone()
+    if old_image and old_image != new_image and (old_image.startswith("/uploads/") or (SUPABASE_URL and old_image.startswith(SUPABASE_URL))):
+        delete_product_image(old_image)
     return dict(row)
 
 
 @app.delete("/api/admin/partner-ads/{ad_id}")
 def admin_delete_partner_ad(ad_id: str, user=Depends(admin_user)):
     with conn() as db:
-        db.execute("DELETE FROM partner_ads WHERE id=?", (ad_id,))
-        db.commit()
+        row = db.execute("SELECT * FROM partner_ads WHERE id=?", (ad_id,)).fetchone()
+        if row:
+            image_url = row["image_url"]
+            db.execute("DELETE FROM partner_ads WHERE id=?", (ad_id,))
+            db.commit()
+        else:
+            image_url = None
+    if image_url and (image_url.startswith("/uploads/") or (SUPABASE_URL and image_url.startswith(SUPABASE_URL))):
+        delete_product_image(image_url)
     return {"ok": True}
 
 
