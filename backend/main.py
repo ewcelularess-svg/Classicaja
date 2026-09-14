@@ -2311,6 +2311,60 @@ def admin_update_payment_integration(provider: str, payload: PaymentIntegrationI
     return payment_integration_view(updated)
 
 
+@app.post("/api/admin/payment-integrations/pagbank/test")
+def admin_test_pagbank_integration(user=Depends(admin_user)):
+    import httpx
+    with conn() as db:
+        config = _pagbank_config(db, require_enabled=False)
+    if not config:
+        raise HTTPException(400, "Salve primeiro um Token PagBank no Painel Master")
+
+    url = f"{_pagbank_base_url(config['mode'])}/public-keys/card"
+    try:
+        response = httpx.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {config['token']}",
+                "Accept": "application/json",
+            },
+            timeout=20,
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(502, f"Não foi possível conectar ao PagBank: {exc.__class__.__name__}")
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+
+    environment = "Produção" if config["mode"] == "production" else "Sandbox / Teste"
+    if response.status_code == 200:
+        return {
+            "ok": True,
+            "status_code": response.status_code,
+            "environment": environment,
+            "message": f"Token autenticado com sucesso no PagBank ({environment}).",
+        }
+
+    if response.status_code in {401, 403}:
+        detail = payload.get("message") or payload.get("error") or payload.get("error_messages")
+        raise HTTPException(
+            response.status_code,
+            f"PagBank recusou o token no ambiente {environment}. Confira se o token pertence a este mesmo ambiente. Detalhe: {detail or 'não autorizado'}",
+        )
+
+    # O endpoint de chave pública pode responder 400 quando a conta ainda não possui
+    # chave pública de cartão. Nesse caso a chamada chegou autenticada ao PagBank, mas
+    # não é seguro afirmar que a conta está pronta para PIX; mostramos o retorno exato.
+    detail = payload.get("message") or payload.get("error") or payload.get("error_messages") or response.text[:300]
+    return {
+        "ok": False,
+        "status_code": response.status_code,
+        "environment": environment,
+        "message": f"O PagBank respondeu HTTP {response.status_code}. A autenticação chegou à API, mas a conta precisa ser verificada antes do PIX. Detalhe: {detail}",
+    }
+
+
 @app.get("/api/admin/payment-integrations/default")
 def admin_default_payment_integration(user=Depends(admin_user)):
     with conn() as db:

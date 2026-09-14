@@ -58,13 +58,26 @@ function PaymentIntegrationCard({integration,onSaved}){
     credentials:initialCredentials,
   });
   const [busy,setBusy]=useState(false);
+  const [testing,setTesting]=useState(false);
+  const [testResult,setTestResult]=useState(null);
   const setCredential=(key,value)=>setForm({...form,credentials:{...form.credentials,[key]:value}});
   const save=async()=>{
     setBusy(true);
+    setTestResult(null);
     try{
       await api(`/api/admin/payment-integrations/${integration.provider}`,{method:'PUT',body:JSON.stringify(form)});
       await onSaved();
     }catch(e){alert(e.message)}finally{setBusy(false)}
+  };
+  const testPagBank=async()=>{
+    setTesting(true);
+    setTestResult(null);
+    try{
+      const result=await api('/api/admin/payment-integrations/pagbank/test',{method:'POST'});
+      setTestResult({ok:Boolean(result.ok),message:result.message||'Teste concluído.'});
+    }catch(e){
+      setTestResult({ok:false,message:e.message||'Falha ao testar PagBank.'});
+    }finally{setTesting(false)}
   };
   return <article className={`pix-integration-card ${integration.enabled?'enabled':''} ${integration.is_default?'default':''}`}>
     <div className="pix-integration-head">
@@ -92,10 +105,15 @@ function PaymentIntegrationCard({integration,onSaved}){
       </label>)}
     </div>
 
-    <div className="pix-webhook-box"><PlugZap/><div><b>Webhook do ClassificaJá</b><span>{`${window.location.origin}/api/payments/webhook/${integration.provider}`}</span><small>Use este endereço quando o conector real deste provedor for ativado.</small></div></div>
+    <div className="pix-webhook-box"><PlugZap/><div><b>Webhook do ClassificaJá</b><span>{integration.provider==='pagbank'?`${window.location.origin}/api/webhooks/pagbank`:`${window.location.origin}/api/payments/webhook/${integration.provider}`}</span><small>{integration.provider==='pagbank'?'O ClassificaJá envia este endereço automaticamente ao criar cada cobrança PIX PagBank.':'Use este endereço quando o conector real deste provedor for ativado.'}</small></div></div>
+    {integration.provider==='pagbank'&&<div className="pix-live-note"><ShieldCheck/><span><b>Salvar credenciais não testa o token.</b> Depois de salvar, use o botão abaixo para validar a autenticação no mesmo ambiente selecionado. Para gerar PIX, a conta PagBank também precisa ter uma chave PIX ativa.</span></div>}
 
     {!integration.security_ready&&<div className="pix-security-warning"><LockKeyhole/><span>Configure <b>PAYMENT_CONFIG_KEY</b> no Render antes de salvar credenciais de produção.</span></div>}
     <button className="primary wide" onClick={save} disabled={busy}>{busy?'Salvando integração...':'Salvar integração PIX'}</button>
+    {integration.provider==='pagbank'&&<>
+      <button className="secondary-btn wide pix-test-button" onClick={testPagBank} disabled={testing||busy}>{testing?'Testando conexão...':'Testar conexão PagBank'}</button>
+      {testResult&&<div className={`pix-test-result ${testResult.ok?'ok':'error'}`}><ShieldCheck/><span>{testResult.message}</span></div>}
+    </>}
   </article>
 }
 
@@ -174,7 +192,7 @@ export default function Admin(){
   {tab==='pix'&&<section className="pix-master-section">
     <div className="pix-master-intro"><div><span className="section-kicker">RECEBIMENTO PIX</span><h2>Integrações de pagamento</h2><p>Cadastre e gerencie suas credenciais de pagamento diretamente no Master. As chaves privadas ficam criptografadas no backend e não são mostradas novamente.</p></div><div className="pix-security-pill"><ShieldCheck/> Credenciais protegidas</div></div>
     <div className="pix-provider-grid">{integrations.map(item=><PaymentIntegrationCard key={item.provider} integration={item} onSaved={load}/>)}</div>
-    <div className="pix-master-note"><b>Importante:</b> esta tela prepara e armazena as credenciais com segurança. O checkout atual continua no modo de demonstração até que o conector de criação de cobrança e validação de webhook do provedor escolhido seja ativado no backend.</div>
+    <div className="pix-master-note"><b>Importante:</b> no PagBank, o checkout PIX é exibido dentro do ClassificaJá em forma de QR Code e código Copia e Cola. Salvar o token não redireciona o navegador para o PagBank.</div>
   </section>}
 
   {tab==='reports'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Anúncio</th><th>Denunciante</th><th>Motivo</th><th>Detalhes</th><th>Status</th><th>Ação</th></tr></thead><tbody>{reports.map(r=><tr key={r.id}><td><b>{r.product_title}</b></td><td>{r.reporter_name}</td><td>{r.reason}</td><td>{r.details||'—'}</td><td><span className={`master-status ${r.status}`}>{statusLabel(r.status)}</span></td><td>{r.status==='open'?<button className="secondary-btn" onClick={()=>resolve(r.id)}>Resolver</button>:'—'}</td></tr>)}</tbody></table></div>}

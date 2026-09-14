@@ -2932,3 +2932,10 @@ button{
   .plan-choice-grid .plan-teaser-card{padding:20px!important}
   .plan-gate-success{padding:20px;display:grid}
 }
+
+/* V2.14.8 — diagnóstico PagBank */
+.pix-test-button{margin-top:10px;min-height:46px}
+.pix-test-result{margin-top:10px;padding:12px 14px;border-radius:13px;display:flex;align-items:flex-start;gap:9px;font-size:12px;line-height:1.45;font-weight:700}
+.pix-test-result svg{width:18px;height:18px;flex:0 0 auto}
+.pix-test-result.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#047857}
+.pix-test-result.error{background:#fff1f2;border:1px solid #fecdd3;color:#be123c}
