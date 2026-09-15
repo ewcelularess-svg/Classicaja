@@ -1,10 +1,10 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {
   BadgeCheck, Ban, CheckCircle2, CircleDollarSign, Crown, Eye, ExternalLink, Flag, Handshake, LayoutDashboard,
-  KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle
+  KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud
 } from 'lucide-react';
 import {Link} from 'react-router-dom';
-import {api} from '../lib/api';
+import {api,imageUrl} from '../lib/api';
 
 const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const date=v=>v?new Date(v).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}):'—';
@@ -118,44 +118,99 @@ function PaymentIntegrationCard({integration,onSaved}){
 }
 
 function PartnerAdsManager({items,onSaved}){
-  const blank={company_name:'',title:'',subtitle:'',image_url:'',target_url:'',placement:'both',active:true};
+  const blank={company_name:'',title:'',subtitle:'',image_url:'',target_url:'',plan_tier:'plus',active:true};
   const [form,setForm]=useState(blank);
   const [editingId,setEditingId]=useState(null);
   const [busy,setBusy]=useState(false);
-  const edit=(item)=>{setEditingId(item.id);setForm({company_name:item.company_name||'',title:item.title||'',subtitle:item.subtitle||'',image_url:item.image_url||'',target_url:item.target_url||'',placement:item.placement||'both',active:Boolean(item.active)});window.scrollTo({top:0,behavior:'smooth'})};
-  const reset=()=>{setEditingId(null);setForm(blank)};
+  const [imageFile,setImageFile]=useState(null);
+  const [imagePreview,setImagePreview]=useState('');
+
+  const tierInfo={
+    legacy:{label:'Grátis / Básico',tone:'free',summary:'Sem parcerias',spots:['Sem exibição em espaços de parceria']},
+    plus:{label:'Plus',tone:'plus',summary:'Exposição intermediária',spots:['Final do feed com prioridade','Após a descrição do anúncio','Rodapé da página do anúncio']},
+    premium:{label:'Premium',tone:'premium',summary:'Máxima exposição',spots:['Após as categorias na Home','Área nobre da página do anúncio','Após a descrição','Final do feed com prioridade máxima','Rodapé do anúncio']},
+  };
+  const currentTier=tierInfo[form.plan_tier]||tierInfo.plus;
+
+  const clearPreview=()=>{
+    if(imagePreview?.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
+    setImagePreview('');
+  };
+  const reset=()=>{clearPreview();setImageFile(null);setEditingId(null);setForm(blank)};
+  const edit=(item)=>{
+    clearPreview();setImageFile(null);setEditingId(item.id);
+    setForm({company_name:item.company_name||'',title:item.title||'',subtitle:item.subtitle||'',image_url:item.image_url||'',target_url:item.target_url||'',plan_tier:item.plan_tier==='premium'?'premium':'plus',active:Boolean(item.active)});
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+  const chooseImage=(e)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    clearPreview();
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
   const save=async()=>{
     if(!form.company_name.trim()||!form.title.trim()){alert('Informe a empresa e o título da parceria.');return}
     setBusy(true);
     try{
-      await api(editingId?`/api/admin/partner-ads/${editingId}`:'/api/admin/partner-ads',{method:editingId?'PUT':'POST',body:JSON.stringify(form)});
+      let finalImage=form.image_url||'';
+      if(imageFile){
+        const fd=new FormData();fd.append('image',imageFile);
+        const uploaded=await api('/api/admin/partner-ads/image',{method:'POST',body:fd});
+        finalImage=uploaded.image_url||'';
+      }
+      const payload={...form,image_url:finalImage,placement:'auto'};
+      await api(editingId?`/api/admin/partner-ads/${editingId}`:'/api/admin/partner-ads',{method:editingId?'PUT':'POST',body:JSON.stringify(payload)});
       reset(); await onSaved();
     }catch(e){alert(e.message)}finally{setBusy(false)}
   };
   const remove=async(item)=>{if(!confirm(`Excluir a parceria de ${item.company_name}?`))return;try{await api(`/api/admin/partner-ads/${item.id}`,{method:'DELETE'});await onSaved()}catch(e){alert(e.message)}};
+  const displayImage=imagePreview || (form.image_url?imageUrl(form.image_url):'');
+
   return <section className="partner-master-section">
-    <div className="partner-master-intro"><div><span className="section-kicker">MONETIZAÇÃO POR PARCERIAS</span><h2>Publicidade de parceiros</h2><p>O melhor posicionamento é logo após as categorias e novamente no final do feed. Assim a marca ganha visibilidade sem atrapalhar a navegação dos classificados.</p></div><div className="partner-master-badge"><Handshake/> Espaços patrocinados</div></div>
+    <div className="partner-master-intro"><div><span className="section-kicker">MONETIZAÇÃO POR PARCERIAS</span><h2>Publicidade de parceiros por nível</h2><p>Parcerias são exclusivas dos planos <b>Plus</b> e <b>Premium</b>. Grátis e Básico não participam de nenhum espaço patrocinado.</p></div><div className="partner-master-badge"><Handshake/> Exclusivo Plus e Premium</div></div>
+
     <div className="partner-editor-card">
       <div className="partner-editor-title"><h3>{editingId?'Editar parceria':'Nova parceria'}</h3>{editingId&&<button className="secondary-btn" onClick={reset}>Cancelar edição</button>}</div>
       <div className="partner-editor-grid">
         <label>Empresa<input value={form.company_name} onChange={e=>setForm({...form,company_name:e.target.value})} placeholder="Nome da empresa parceira"/></label>
         <label>Título do anúncio<input value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Ex.: Condições especiais para clientes ClassificaJá"/></label>
         <label className="partner-span-2">Descrição curta<input value={form.subtitle} onChange={e=>setForm({...form,subtitle:e.target.value})} placeholder="Mensagem de apoio da campanha"/></label>
-        <label>URL da imagem<input value={form.image_url} onChange={e=>setForm({...form,image_url:e.target.value})} placeholder="https://.../banner.jpg"/></label>
+
+        <div className="partner-image-manager partner-span-2">
+          <div className="partner-image-preview">{displayImage?<img src={displayImage} alt="Prévia da parceria"/>:<Handshake/>}</div>
+          <div className="partner-image-controls">
+            <b>Imagem da parceria</b>
+            <span>Envie do computador/celular ou use uma URL externa. JPG, PNG ou WEBP, até 7 MB.</span>
+            <input id="partner-image-file" className="partner-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseImage}/>
+            <label className="partner-upload-btn" htmlFor="partner-image-file"><UploadCloud/> Selecionar imagem do celular</label>
+            <input value={form.image_url} onChange={e=>setForm({...form,image_url:e.target.value})} placeholder="Ou cole uma URL externa: https://.../banner.jpg"/>
+          </div>
+        </div>
+
         <label>Link do parceiro<input value={form.target_url} onChange={e=>setForm({...form,target_url:e.target.value})} placeholder="https://empresa.com.br"/></label>
-        <label>Posicionamento<select value={form.placement} onChange={e=>setForm({...form,placement:e.target.value})}><option value="both">Topo + final do feed</option><option value="home_top">Após categorias</option><option value="feed_end">Final do feed</option></select></label>
+        <label>Nível de visibilidade<select value={form.plan_tier} onChange={e=>setForm({...form,plan_tier:e.target.value})}><option value="plus">Plus — exposição intermediária</option><option value="premium">Premium — máxima exposição</option></select></label>
         <label className="partner-active-row"><input type="checkbox" checked={form.active} onChange={e=>setForm({...form,active:e.target.checked})}/> <span>Parceria ativa</span></label>
       </div>
+
+      <div className={`partner-placement-preview ${currentTier.tone}`}>
+        <div><b>{currentTier.label}</b><span>{currentTier.summary}</span></div>
+        <div className="partner-placement-chips">{currentTier.spots.map(spot=><span key={spot}>{spot}</span>)}</div>
+      </div>
+
       <button className="primary" onClick={save} disabled={busy}><PlusCircle/>{busy?'Salvando...':editingId?'Salvar alterações':'Adicionar parceria'}</button>
     </div>
-    <div className="partner-admin-list">{items.length?items.map(item=><article className="partner-admin-item" key={item.id}>
-      <div className="partner-admin-preview">{item.image_url?<img src={item.image_url} alt={item.company_name}/>:<Handshake/>}</div>
-      <div className="partner-admin-copy"><div><b>{item.company_name}</b><span className={`master-status ${item.active?'paid':'neutral'}`}>{item.active?'Ativa':'Inativa'}</span></div><strong>{item.title}</strong><small>{item.placement==='both'?'Topo + final do feed':item.placement==='home_top'?'Após categorias':'Final do feed'}</small></div>
-      <div className="partner-admin-actions">{item.target_url&&<a className="master-link-btn" href={item.target_url} target="_blank" rel="noreferrer"><ExternalLink/>Abrir</a>}<button className="secondary-btn" onClick={()=>edit(item)}>Editar</button><button className="danger-lite-btn" onClick={()=>remove(item)}><Trash2/>Excluir</button></div>
-    </article>):<div className="empty"><h3>Nenhuma parceria cadastrada</h3><p>Cadastre uma empresa acima para começar a usar os espaços patrocinados do site.</p></div>}</div>
+
+    <div className="partner-admin-list">{items.length?items.map(item=>{
+      const info=tierInfo[item.plan_tier]||tierInfo.legacy;
+      return <article className={`partner-admin-item tier-${item.plan_tier||'free'}`} key={item.id}>
+        <div className="partner-admin-preview">{item.image_url?<img src={imageUrl(item.image_url)} alt={item.company_name}/>:<Handshake/>}</div>
+        <div className="partner-admin-copy"><div><b>{item.company_name}</b><span className={`master-status ${item.active?'paid':'neutral'}`}>{item.active?'Ativa':'Inativa'}</span><span className={`partner-tier-badge ${info.tone}`}>{info.label}</span></div><strong>{item.title}</strong><small>{info.spots.join(' • ')}</small></div>
+        <div className="partner-admin-actions">{item.target_url&&<a className="master-link-btn" href={item.target_url} target="_blank" rel="noreferrer"><ExternalLink/>Abrir</a>}<button className="secondary-btn" onClick={()=>edit(item)}>Editar</button><button className="danger-lite-btn" onClick={()=>remove(item)}><Trash2/>Excluir</button></div>
+      </article>
+    }):<div className="empty"><h3>Nenhuma parceria cadastrada</h3><p>Cadastre uma empresa acima para começar a usar os espaços patrocinados do site.</p></div>}</div>
   </section>
 }
-
 
 export default function Admin(){
  const [stats,setStats]=useState(null);

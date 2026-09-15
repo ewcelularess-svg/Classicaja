@@ -3424,6 +3424,7 @@ button{
 .partner-upload-btn:hover{border-color:#fda4af;background:#fff7f9}
 .partner-upload-btn svg{width:17px;height:17px;color:var(--brand)}
 .partner-upload-btn input{display:none!important}
+.partner-file-input{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;white-space:nowrap!important}
 
 .partner-placement-preview{
   margin:0 0 14px;
