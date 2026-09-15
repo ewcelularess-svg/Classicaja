@@ -90,6 +90,13 @@ PAYMENT_PROVIDER_DEFS = {
 }
 MASTER_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
 
+# Social login (public IDs are safe to expose; secrets stay server-side).
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+FACEBOOK_APP_ID = os.getenv("FACEBOOK_APP_ID", "").strip()
+FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET", "").strip()
+FACEBOOK_GRAPH_VERSION = os.getenv("FACEBOOK_GRAPH_VERSION", "v26.0").strip() or "v26.0"
+SOCIAL_REAUTH_MINUTES = int(os.getenv("SOCIAL_REAUTH_MINUTES", "15") or "15")
+
 def payment_fernet():
     if not PAYMENT_CONFIG_SECRET:
         return None
@@ -129,7 +136,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.16.5")
+app = FastAPI(title="ClassificaJá API", version="2.16.6")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -231,9 +238,14 @@ def hash_password(password: str, salt: bytes | None = None):
 
 
 def verify_password(password: str, salt_b64: str, digest_b64: str):
-    salt = base64.b64decode(salt_b64)
-    _, candidate = hash_password(password, salt)
-    return secrets.compare_digest(candidate, digest_b64)
+    if not password or not salt_b64 or not digest_b64:
+        return False
+    try:
+        salt = base64.b64decode(salt_b64)
+        _, candidate = hash_password(password, salt)
+        return secrets.compare_digest(candidate, digest_b64)
+    except Exception:
+        return False
 
 
 def table_columns(db, table: str):
@@ -567,7 +579,23 @@ def init_db():
         ensure_column(db, "users", "postal_code", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "users", "profile_review_status", "TEXT NOT NULL DEFAULT 'unverified'")
         ensure_column(db, "users", "profile_updated_at", "TEXT")
+        ensure_column(db, "users", "email_verified", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "users", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
+        ensure_column(db, "sessions", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
+        ensure_column(db, "sessions", "authenticated_at", "TEXT")
         db.execute("UPDATE users SET profile_review_status='verified' WHERE verified=1 AND profile_review_status='unverified'")
+        db.execute("UPDATE users SET email_verified=1 WHERE LOWER(email)=?", (MASTER_EMAIL,)) if MASTER_EMAIL else None
+        db.execute("UPDATE sessions SET authenticated_at=? WHERE authenticated_at IS NULL OR authenticated_at=''", (now_iso(),))
+        db.execute("""CREATE TABLE IF NOT EXISTS user_identities (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            provider_user_id TEXT NOT NULL,
+            provider_email TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(provider, provider_user_id),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
         ensure_column(db, "products", "neighborhood", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "products", "status", "TEXT NOT NULL DEFAULT 'active'")
         ensure_column(db, "products", "featured_until", "TEXT")
@@ -820,6 +848,11 @@ class LoginIn(BaseModel):
     password: str
 
 
+class SocialLoginIn(BaseModel):
+    provider: str
+    credential: str
+
+
 class MessageIn(BaseModel):
     body: str
 
@@ -850,7 +883,7 @@ class VerifyIn(BaseModel):
 
 
 class ProfileUpdateIn(BaseModel):
-    current_password: str
+    current_password: str = ""
     name: str
     phone: str = ""
     address_line: str = ""
@@ -861,7 +894,7 @@ class ProfileUpdateIn(BaseModel):
 
 
 class PasswordChangeIn(BaseModel):
-    current_password: str
+    current_password: str = ""
     new_password: str
 
 
@@ -1070,10 +1103,14 @@ def get_publish_plan_access(db, user_id: str):
     }
 
 
-def create_session(db, user_id: str):
+def create_session(db, user_id: str, provider: str = "local"):
     token = secrets.token_urlsafe(32)
     expires = (now_dt() + timedelta(days=30)).isoformat()
-    db.execute("INSERT INTO sessions(token,user_id,expires_at) VALUES (?,?,?)", (token, user_id, expires))
+    authenticated_at = now_iso()
+    db.execute(
+        "INSERT INTO sessions(token,user_id,expires_at,auth_provider,authenticated_at) VALUES (?,?,?,?,?)",
+        (token, user_id, expires, provider or "local", authenticated_at),
+    )
     db.commit()
     return token
 
@@ -1094,6 +1131,9 @@ def user_public(row):
         "postal_code": value("postal_code"),
         "profile_review_status": value("profile_review_status", "verified" if bool(row["verified"]) else "unverified"),
         "profile_updated_at": value("profile_updated_at", None),
+        "email_verified": bool(value("email_verified", 0)),
+        "auth_provider": value("auth_provider", "local"),
+        "has_password": bool(value("password_salt") and value("password_hash")),
     }
 
 
@@ -1110,6 +1150,58 @@ def current_user(authorization: Optional[str] = Header(default=None)):
     if not row or row["status"] != "active":
         raise HTTPException(401, "Sessão inválida, expirada ou conta bloqueada")
     return dict(row)
+
+
+def current_auth_context(authorization: Optional[str] = Header(default=None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Faça login para continuar")
+    token = authorization.split(" ", 1)[1]
+    with conn() as db:
+        row = db.execute(
+            """SELECT u.*, s.auth_provider AS session_auth_provider, s.authenticated_at AS session_authenticated_at
+               FROM sessions s JOIN users u ON u.id=s.user_id
+               WHERE s.token=? AND s.expires_at>?""",
+            (token, now_iso()),
+        ).fetchone()
+    if not row or row["status"] != "active":
+        raise HTTPException(401, "Sessão inválida ou expirada")
+    return row
+
+
+def _row_value(row, key, default=""):
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
+    return row[key] if key in keys and row[key] is not None else default
+
+
+def _has_password(row) -> bool:
+    return bool(_row_value(row, "password_salt") and _row_value(row, "password_hash"))
+
+
+def _social_session_is_recent(row) -> bool:
+    provider = str(_row_value(row, "session_auth_provider", "local") or "local").lower()
+    if provider not in {"google", "facebook"}:
+        return False
+    raw = _row_value(row, "session_authenticated_at", "")
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return now_dt() - dt <= timedelta(minutes=max(1, SOCIAL_REAUTH_MINUTES))
+    except Exception:
+        return False
+
+
+def _confirm_sensitive_action(row, current_password: str = ""):
+    if _has_password(row):
+        if not verify_password(current_password, _row_value(row, "password_salt"), _row_value(row, "password_hash")):
+            raise HTTPException(401, "Senha atual incorreta")
+        return
+    if _social_session_is_recent(row):
+        return
+    provider = str(_row_value(row, "auth_provider", "social") or "social").title()
+    raise HTTPException(401, f"Por segurança, entre novamente com {provider} para confirmar esta alteração")
 
 
 def optional_user(authorization: Optional[str] = Header(default=None)):
@@ -1197,7 +1289,178 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.16.5", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.16.6", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+
+
+def _verify_google_credential(credential: str) -> dict:
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(503, "Login com Google ainda não foi configurado")
+    import httpx
+    try:
+        response = httpx.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={"id_token": credential},
+            timeout=15,
+        )
+    except httpx.RequestError:
+        raise HTTPException(503, "Não foi possível validar o Google agora")
+    if response.status_code != 200:
+        raise HTTPException(401, "Credencial Google inválida ou expirada")
+    data = response.json()
+    if str(data.get("aud") or "") != GOOGLE_CLIENT_ID:
+        raise HTTPException(401, "Credencial Google não pertence ao ClassificaJá")
+    if str(data.get("iss") or "") not in {"accounts.google.com", "https://accounts.google.com"}:
+        raise HTTPException(401, "Emissor Google inválido")
+    try:
+        if int(data.get("exp") or 0) <= int(now_dt().timestamp()):
+            raise HTTPException(401, "Credencial Google expirada")
+    except (TypeError, ValueError):
+        raise HTTPException(401, "Credencial Google inválida")
+    email = str(data.get("email") or "").strip().lower()
+    email_verified = str(data.get("email_verified") or "").lower() == "true"
+    if not email or not email_verified:
+        raise HTTPException(401, "O Google não confirmou um e-mail válido para esta conta")
+    return {
+        "provider": "google",
+        "provider_user_id": str(data.get("sub") or ""),
+        "email": email,
+        "email_verified": True,
+        "name": str(data.get("name") or email.split("@", 1)[0]).strip(),
+        "avatar_url": str(data.get("picture") or "").strip(),
+    }
+
+
+def _verify_facebook_credential(credential: str) -> dict:
+    if not FACEBOOK_APP_ID or not FACEBOOK_APP_SECRET:
+        raise HTTPException(503, "Login com Facebook ainda não foi configurado")
+    import httpx
+    app_token = f"{FACEBOOK_APP_ID}|{FACEBOOK_APP_SECRET}"
+    base = f"https://graph.facebook.com/{FACEBOOK_GRAPH_VERSION}"
+    try:
+        debug = httpx.get(
+            f"{base}/debug_token",
+            params={"input_token": credential, "access_token": app_token},
+            timeout=15,
+        )
+        debug.raise_for_status()
+        info = (debug.json() or {}).get("data") or {}
+        if not info.get("is_valid") or str(info.get("app_id") or "") != FACEBOOK_APP_ID:
+            raise HTTPException(401, "Credencial Facebook inválida ou expirada")
+        expires_at = int(info.get("expires_at") or 0)
+        if expires_at and expires_at <= int(now_dt().timestamp()):
+            raise HTTPException(401, "Credencial Facebook expirada")
+        profile = httpx.get(
+            f"{base}/me",
+            params={"fields": "id,name,email,picture.type(large)", "access_token": credential},
+            timeout=15,
+        )
+        profile.raise_for_status()
+        data = profile.json() or {}
+    except HTTPException:
+        raise
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError):
+        raise HTTPException(503, "Não foi possível validar o Facebook agora")
+    email = str(data.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Sua conta do Facebook não forneceu um e-mail. Autorize o acesso ao e-mail para continuar")
+    picture = (((data.get("picture") or {}).get("data") or {}).get("url") or "")
+    return {
+        "provider": "facebook",
+        "provider_user_id": str(data.get("id") or ""),
+        "email": email,
+        # O token e o e-mail são obtidos diretamente da Graph API após validar o app/token.
+        "email_verified": True,
+        "name": str(data.get("name") or email.split("@", 1)[0]).strip(),
+        "avatar_url": str(picture).strip(),
+    }
+
+
+def verify_social_credential(provider: str, credential: str) -> dict:
+    provider = (provider or "").strip().lower()
+    credential = (credential or "").strip()
+    if not credential:
+        raise HTTPException(400, "Credencial social ausente")
+    if provider == "google":
+        return _verify_google_credential(credential)
+    if provider == "facebook":
+        return _verify_facebook_credential(credential)
+    raise HTTPException(400, "Provedor social não suportado")
+
+
+@app.get("/api/auth/providers")
+def auth_providers():
+    return {
+        "google": {"enabled": bool(GOOGLE_CLIENT_ID), "client_id": GOOGLE_CLIENT_ID if GOOGLE_CLIENT_ID else ""},
+        "facebook": {
+            "enabled": bool(FACEBOOK_APP_ID and FACEBOOK_APP_SECRET),
+            "app_id": FACEBOOK_APP_ID if FACEBOOK_APP_ID else "",
+            "graph_version": FACEBOOK_GRAPH_VERSION,
+        },
+    }
+
+
+@app.post("/api/auth/social")
+def social_login(payload: SocialLoginIn):
+    identity = verify_social_credential(payload.provider, payload.credential)
+    provider = identity["provider"]
+    provider_user_id = identity["provider_user_id"]
+    email = identity["email"]
+    if not provider_user_id:
+        raise HTTPException(401, "O provedor não retornou um identificador válido")
+    new_user = False
+    with conn() as db:
+        linked = db.execute(
+            """SELECT u.* FROM user_identities i JOIN users u ON u.id=i.user_id
+               WHERE i.provider=? AND i.provider_user_id=?""",
+            (provider, provider_user_id),
+        ).fetchone()
+        user = linked
+        if not user:
+            # O e-mail é a chave de reconciliação para evitar contas duplicadas.
+            user = db.execute("SELECT * FROM users WHERE LOWER(email)=?", (email,)).fetchone()
+            if user:
+                db.execute(
+                    "INSERT OR IGNORE INTO user_identities(id,user_id,provider,provider_user_id,provider_email,created_at) VALUES (?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), user["id"], provider, provider_user_id, email, now_iso()),
+                )
+                updates = []
+                params = []
+                if identity.get("email_verified") and not bool(_row_value(user, "email_verified", 0)):
+                    updates.append("email_verified=1")
+                if identity.get("avatar_url") and not _row_value(user, "avatar_url", ""):
+                    updates.append("avatar_url=?")
+                    params.append(identity["avatar_url"] )
+                if not _has_password(user):
+                    updates.append("auth_provider=?")
+                    params.append(provider)
+                if updates:
+                    params.append(user["id"] )
+                    db.execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", tuple(params))
+                    user = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+            else:
+                new_user = True
+                uid = str(uuid.uuid4())
+                db.execute(
+                    """INSERT INTO users(
+                        id,name,email,phone,password_salt,password_hash,created_at,role,verified,status,
+                        avatar_url,email_verified,auth_provider,profile_review_status
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        uid, identity.get("name") or email.split("@", 1)[0], email, "", "", "", now_iso(),
+                        "user", 0, "active", identity.get("avatar_url") or None,
+                        1 if identity.get("email_verified") else 0, provider, "unverified",
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO user_identities(id,user_id,provider,provider_user_id,provider_email,created_at) VALUES (?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), uid, provider, provider_user_id, email, now_iso()),
+                )
+                user = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if user["status"] != "active":
+            raise HTTPException(403, "Conta indisponível")
+        token = create_session(db, user["id"], provider)
+        user = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+    return {"token": token, "user": user_public(user), "new_user": new_user, "provider": provider}
 
 
 @app.post("/api/auth/register")
@@ -1211,10 +1474,11 @@ def register(payload: RegisterIn):
     try:
         with conn() as db:
             db.execute(
-                "INSERT INTO users(id,name,email,phone,password_salt,password_hash,created_at,role,verified,status) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (uid, payload.name.strip(), payload.email.lower().strip(), payload.phone.strip(), salt, pwhash, now_iso(), "user", 0, "active"),
+                """INSERT INTO users(id,name,email,phone,password_salt,password_hash,created_at,role,verified,status,email_verified,auth_provider)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid, payload.name.strip(), payload.email.lower().strip(), payload.phone.strip(), salt, pwhash, now_iso(), "user", 0, "active", 0, "local"),
             )
-            token = create_session(db, uid)
+            token = create_session(db, uid, "local")
             row = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     except DBIntegrityError:
         raise HTTPException(409, "Este e-mail já está cadastrado")
@@ -1224,12 +1488,17 @@ def register(payload: RegisterIn):
 @app.post("/api/auth/login")
 def login(payload: LoginIn):
     with conn() as db:
-        user = db.execute("SELECT * FROM users WHERE email=?", (payload.email.lower().strip(),)).fetchone()
-        if not user or not verify_password(payload.password, user["password_salt"], user["password_hash"]):
+        user = db.execute("SELECT * FROM users WHERE LOWER(email)=?", (payload.email.lower().strip(),)).fetchone()
+        if not user:
+            raise HTTPException(401, "E-mail ou senha incorretos")
+        if not _has_password(user):
+            provider = str(_row_value(user, "auth_provider", "social") or "social").title()
+            raise HTTPException(401, f"Esta conta usa login com {provider}. Entre pelo botão {provider} ou crie uma senha no seu painel")
+        if not verify_password(payload.password, user["password_salt"], user["password_hash"]):
             raise HTTPException(401, "E-mail ou senha incorretos")
         if user["status"] != "active":
             raise HTTPException(403, "Conta indisponível")
-        token = create_session(db, user["id"])
+        token = create_session(db, user["id"], "local")
     return {"token": token, "user": user_public(user)}
 
 
@@ -1239,9 +1508,8 @@ def me(user=Depends(current_user)):
 
 
 @app.put("/api/me/profile")
-def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_user)):
-    if not verify_password(payload.current_password, user["password_salt"], user["password_hash"]):
-        raise HTTPException(401, "Senha atual incorreta")
+def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_auth_context)):
+    _confirm_sensitive_action(user, payload.current_password)
     name = payload.name.strip()
     if len(name) < 2:
         raise HTTPException(400, "Informe um nome válido")
@@ -1266,11 +1534,10 @@ def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_user)):
 
 
 @app.post("/api/me/avatar")
-async def update_my_avatar(current_password: str = Form(...), image: UploadFile = File(...), user=Depends(current_user)):
-    if not verify_password(current_password, user["password_salt"], user["password_hash"]):
-        raise HTTPException(401, "Senha atual incorreta")
+async def update_my_avatar(current_password: str = Form(""), image: UploadFile = File(...), user=Depends(current_auth_context)):
+    _confirm_sensitive_action(user, current_password)
     new_url = await save_profile_image(image)
-    old_url = user.get("avatar_url")
+    old_url = _row_value(user, "avatar_url", "")
     with conn() as db:
         db.execute(
             "UPDATE users SET avatar_url=?,verified=0,profile_review_status='pending',profile_updated_at=? WHERE id=?",
@@ -1284,18 +1551,23 @@ async def update_my_avatar(current_password: str = Form(...), image: UploadFile 
 
 
 @app.put("/api/me/password")
-def update_my_password(payload: PasswordChangeIn, user=Depends(current_user)):
-    if not verify_password(payload.current_password, user["password_salt"], user["password_hash"]):
-        raise HTTPException(401, "Senha atual incorreta")
+def update_my_password(payload: PasswordChangeIn, user=Depends(current_auth_context)):
+    had_password = _has_password(user)
+    if had_password:
+        if not verify_password(payload.current_password, _row_value(user, "password_salt"), _row_value(user, "password_hash")):
+            raise HTTPException(401, "Senha atual incorreta")
+    elif not _social_session_is_recent(user):
+        provider = str(_row_value(user, "auth_provider", "social") or "social").title()
+        raise HTTPException(401, f"Entre novamente com {provider} antes de criar uma senha")
     if len(payload.new_password) < 8:
         raise HTTPException(400, "A nova senha precisa ter pelo menos 8 caracteres")
-    if payload.current_password == payload.new_password:
+    if had_password and payload.current_password == payload.new_password:
         raise HTTPException(400, "A nova senha deve ser diferente da atual")
     salt, pwhash = hash_password(payload.new_password)
     with conn() as db:
         db.execute("UPDATE users SET password_salt=?,password_hash=? WHERE id=?", (salt, pwhash, user["id"]))
         db.commit()
-    return {"ok": True, "message": "Senha alterada com sucesso"}
+    return {"ok": True, "message": "Senha alterada com sucesso" if had_password else "Senha criada com sucesso. Agora você também pode entrar por e-mail e senha"}
 
 
 @app.get("/api/categories")

@@ -134,7 +134,7 @@ export default function Dashboard(){
 
  const saveProfile=async(e)=>{
    e.preventDefault();
-   if(!profileForm.current_password){alert('Digite sua senha atual para confirmar as alterações.');return}
+   if(profile?.has_password&&!profileForm.current_password){alert('Digite sua senha atual para confirmar as alterações.');return}
    setProfileBusy(true);
    try{
      const result=await api('/api/me/profile',{method:'PUT',body:JSON.stringify(profileForm)});
@@ -153,8 +153,11 @@ export default function Dashboard(){
 
  const uploadProfilePhoto=async()=>{
    if(!profilePhoto){alert('Selecione uma foto.');return}
-   const password=prompt('Digite sua senha atual para confirmar a troca da foto:')||'';
-   if(!password)return;
+   let password='';
+   if(profile?.has_password){
+     password=prompt('Digite sua senha atual para confirmar a troca da foto:')||'';
+     if(!password)return;
+   }
    setProfileBusy(true);
    try{
      const fd=new FormData();fd.append('current_password',password);fd.append('image',profilePhoto);
@@ -171,6 +174,8 @@ export default function Dashboard(){
    try{
      const result=await api('/api/me/password',{method:'PUT',body:JSON.stringify({current_password:passwordForm.current_password,new_password:passwordForm.new_password})});
      setPasswordForm({current_password:'',new_password:'',confirm_password:''});
+     await refreshUser?.();
+     await load();
      alert(result.message||'Senha alterada.');
    }catch(e){alert(e.message)}finally{setPasswordBusy(false)}
  };
@@ -220,18 +225,18 @@ export default function Dashboard(){
           <label>Cidade<input value={profileForm.city} onChange={e=>setProfileForm({...profileForm,city:e.target.value})}/></label>
           <label>Estado<input maxLength="2" value={profileForm.state} onChange={e=>setProfileForm({...profileForm,state:e.target.value.toUpperCase()})} placeholder="PR"/></label>
           <label>CEP<input inputMode="numeric" value={profileForm.postal_code} onChange={e=>setProfileForm({...profileForm,postal_code:e.target.value})} placeholder="00000-000"/></label>
-          <label className="span-2 confirmation-field"><ShieldCheck/>Senha atual para confirmar<input type="password" value={profileForm.current_password} onChange={e=>setProfileForm({...profileForm,current_password:e.target.value})} placeholder="Digite sua senha atual" required/></label>
+          {profile?.has_password?<label className="span-2 confirmation-field"><ShieldCheck/>Senha atual para confirmar<input type="password" value={profileForm.current_password} onChange={e=>setProfileForm({...profileForm,current_password:e.target.value})} placeholder="Digite sua senha atual" required/></label>:<div className="span-2 social-profile-confirm"><ShieldCheck/><div><b>Conta conectada com {profile?.auth_provider==='google'?'Google':'Facebook'}</b><span>Alterações sensíveis usam sua sessão social recente. Se ela tiver expirado, entre novamente pelo provedor para confirmar.</span></div></div>}
         </div>
-        <div className="profile-verification-banner"><ShieldCheck/><div><b>Verificação obrigatória</b><span>Ao salvar nome, telefone ou endereço, o selo de verificado fica pendente até aprovação no Painel Master.</span></div></div>
+        <div className="profile-verification-banner"><ShieldCheck/><div><b>Verificação obrigatória</b><span>Ao salvar nome, telefone, endereço ou foto, o selo fica pendente até aprovação no Painel Master. {profile?.email_verified?'Seu e-mail já foi confirmado pelo provedor de login.':''}</span></div></div>
         <button className="primary" disabled={profileBusy}>{profileBusy?'Salvando...':'Salvar e enviar para verificação'}</button>
       </form>
 
       <form className="profile-card-v2165 password-card-v2165" onSubmit={changePassword}>
-        <div className="profile-card-title"><LockKeyhole/><div><h2>Senha</h2><p>A senha atual confirma que a alteração é realmente sua.</p></div></div>
-        <label>Senha atual<input type="password" value={passwordForm.current_password} onChange={e=>setPasswordForm({...passwordForm,current_password:e.target.value})} required/></label>
-        <label>Nova senha<input type="password" minLength="8" value={passwordForm.new_password} onChange={e=>setPasswordForm({...passwordForm,new_password:e.target.value})} placeholder="Mínimo de 8 caracteres" required/></label>
+        <div className="profile-card-title"><LockKeyhole/><div><h2>{profile?.has_password?'Senha':'Criar senha'}</h2><p>{profile?.has_password?'A senha atual confirma que a alteração é realmente sua.':'Sua conta social pode também ter uma senha do ClassificaJá. Por segurança, crie-a logo após entrar com Google/Facebook.'}</p></div></div>
+        {profile?.has_password&&<label>Senha atual<input type="password" value={passwordForm.current_password} onChange={e=>setPasswordForm({...passwordForm,current_password:e.target.value})} required/></label>}
+        <label>{profile?.has_password?'Nova senha':'Nova senha do ClassificaJá'}<input type="password" minLength="8" value={passwordForm.new_password} onChange={e=>setPasswordForm({...passwordForm,new_password:e.target.value})} placeholder="Mínimo de 8 caracteres" required/></label>
         <label>Confirmar nova senha<input type="password" minLength="8" value={passwordForm.confirm_password} onChange={e=>setPasswordForm({...passwordForm,confirm_password:e.target.value})} required/></label>
-        <button className="primary" disabled={passwordBusy}>{passwordBusy?'Alterando...':'Alterar senha'}</button>
+        <button className="primary" disabled={passwordBusy}>{passwordBusy?(profile?.has_password?'Alterando...':'Criando...'):(profile?.has_password?'Alterar senha':'Criar senha')}</button>
       </form>
     </div>
   </section>}

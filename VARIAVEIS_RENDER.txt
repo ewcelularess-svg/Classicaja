@@ -10,3 +10,10 @@ DB_SSLMODE=require
 
 # Opcional, recomendado: chave longa para criptografar credenciais PIX no banco
 PAYMENT_CONFIG_KEY=
+
+# Login social (V2.16.6)
+GOOGLE_CLIENT_ID=
+FACEBOOK_APP_ID=
+FACEBOOK_APP_SECRET=
+FACEBOOK_GRAPH_VERSION=v26.0
+SOCIAL_REAUTH_MINUTES=15
