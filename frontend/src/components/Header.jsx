@@ -1,5 +1,7 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
+  ChevronLeft,
+  ChevronRight,
   Heart,
   LogOut,
   MapPin,
@@ -11,6 +13,7 @@ import {
 } from 'lucide-react';
 import {Link, NavLink, useLocation, useNavigate} from 'react-router-dom';
 import {useAuth} from '../main';
+import {api, imageUrl} from '../lib/api';
 import NotificationsMenu from './NotificationsMenu';
 
 export default function Header(){
@@ -21,6 +24,27 @@ export default function Header(){
   const isProduct=location.pathname.startsWith('/produto/');
   const [term,setTerm]=useState('');
   const [city,setCity]=useState('');
+  const [slides,setSlides]=useState([]);
+  const [slideIndex,setSlideIndex]=useState(0);
+
+  useEffect(()=>{
+    if(!isHome){
+      setSlides([]);
+      setSlideIndex(0);
+      return;
+    }
+    let active=true;
+    api('/api/home-slides?limit=8')
+      .then(data=>{if(active){setSlides(Array.isArray(data)?data:[]);setSlideIndex(0)}})
+      .catch(()=>{if(active)setSlides([])});
+    return()=>{active=false};
+  },[isHome]);
+
+  useEffect(()=>{
+    if(!isHome||slides.length<2) return;
+    const timer=setInterval(()=>setSlideIndex(i=>(i+1)%slides.length),4500);
+    return()=>clearInterval(timer);
+  },[isHome,slides.length]);
 
   function submitSearch(e){
     e.preventDefault();
@@ -30,7 +54,23 @@ export default function Header(){
     nav(`/${params.toString()?`?${params.toString()}`:''}`);
   }
 
-  return <header className={`topbar premium-topbar ${isHome?'home-topbar':''} ${isProduct?'product-topbar':''}`}>
+  function moveSlide(step){
+    if(!slides.length) return;
+    setSlideIndex(i=>(i+step+slides.length)%slides.length);
+  }
+
+  const activeSlide=slides[slideIndex]||slides[0]||null;
+  const activeImage=activeSlide?.image_url?imageUrl(activeSlide.image_url):null;
+  const slideVisual=activeSlide&&activeImage?<>
+    <span className="home-header-slide-bg" style={{backgroundImage:`url(${activeImage})`}} aria-hidden="true"/>
+    <img className="home-header-slide-image" src={activeImage} alt={activeSlide.title||'Banner ClassificaJá'}/>
+    {(activeSlide.title||activeSlide.subtitle)&&<span className="home-header-slide-caption">
+      {activeSlide.title&&<strong>{activeSlide.title}</strong>}
+      {activeSlide.subtitle&&<small>{activeSlide.subtitle}</small>}
+    </span>}
+  </>:null;
+
+  return <header className={`topbar premium-topbar ${isHome?'home-topbar home-topbar-slider':''} ${isProduct?'product-topbar':''}`}>
     <div className={`topbar-inner premium-header-row ${isHome?'home-header-row':''}`}>
       <Link className="brand brand-premium" to="/" aria-label="ClassificaJá - Início">
         <img src="/logo-classificaja.png" alt="ClassificaJá" className="brand-logo"/>
@@ -64,6 +104,22 @@ export default function Header(){
         </>}
       </div>
     </div>
+
+    {isHome&&<div className="home-header-slider-shell" aria-label="Destaques do ClassificaJá">
+      {activeSlide&&activeImage?<div className="home-header-slider">
+        {activeSlide.target_url?<a className="home-header-slide" href={activeSlide.target_url} target="_blank" rel="noreferrer sponsored" aria-label={activeSlide.title||'Abrir destaque'}>{slideVisual}</a>:<div className="home-header-slide">{slideVisual}</div>}
+        {slides.length>1&&<>
+          <button type="button" className="home-header-slider-arrow prev" onClick={()=>moveSlide(-1)} aria-label="Banner anterior"><ChevronLeft/></button>
+          <button type="button" className="home-header-slider-arrow next" onClick={()=>moveSlide(1)} aria-label="Próximo banner"><ChevronRight/></button>
+          <div className="home-header-slider-dots" aria-label="Selecionar banner">
+            {slides.map((item,index)=><button key={item.id} type="button" className={index===slideIndex?'active':''} onClick={()=>setSlideIndex(index)} aria-label={`Mostrar banner ${index+1}`}/>)}
+          </div>
+        </>}
+      </div>:<div className="home-header-slider-empty">
+        <strong>ClassificaJá</strong>
+        <span>Cadastre banners em Master → Slider Home.</span>
+      </div>}
+    </div>}
 
     <div className="header-subnav">
       <div className={`header-subnav-inner ${isHome?'home-subnav-inner':''}`}>

@@ -4587,3 +4587,377 @@ body{background:#f7f8fa}
   .product-info-v2162 h1{font-size:20px!important}.product-info-v2162 .detail-price{font-size:29px!important}
   .product-contact-fixed-v2162{gap:6px!important;padding-left:9px!important;padding-right:9px!important}.product-contact-fixed-v2162>*{font-size:10.5px!important;height:45px!important}
 }
+
+
+/* =========================================================
+   V2.16.3 — SLIDER PRINCIPAL EXCLUSIVO DO MASTER
+   ========================================================= */
+.master-home-slider{
+  background:#111827;
+}
+.master-home-slide{
+  position:absolute;
+  inset:0;
+  overflow:hidden;
+  background:#111827;
+  text-decoration:none;
+}
+.master-home-slide::after{
+  display:none!important;
+}
+.hero-slide-blur{
+  position:absolute;
+  inset:-18px;
+  z-index:0;
+  background-position:center;
+  background-size:cover;
+  background-repeat:no-repeat;
+  filter:blur(18px) saturate(.92);
+  transform:scale(1.08);
+  opacity:.8;
+}
+.master-home-slide>.hero-slide-fit{
+  position:relative;
+  z-index:1;
+  width:100%;
+  height:100%;
+  display:block;
+  object-fit:contain!important;
+  object-position:center!important;
+  background:transparent!important;
+}
+.hero-master-overlay{
+  position:absolute;
+  z-index:3;
+  left:0;
+  right:0;
+  bottom:0;
+  padding:48px 22px 20px;
+  display:grid;
+  gap:4px;
+  color:#fff;
+  background:linear-gradient(180deg,transparent 0%,rgba(5,10,20,.18) 18%,rgba(5,10,20,.82) 100%);
+  pointer-events:none;
+}
+.hero-master-overlay small{
+  width:max-content;
+  padding:5px 8px;
+  border-radius:999px;
+  background:rgba(255,255,255,.15);
+  backdrop-filter:blur(7px);
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.1em;
+}
+.hero-master-overlay h3{
+  margin:0;
+  max-width:90%;
+  font-size:22px;
+  line-height:1.12;
+  color:#fff;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.hero-master-overlay p{
+  margin:0;
+  max-width:88%;
+  font-size:12px;
+  line-height:1.35;
+  color:#e5e7eb;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.master-slider-empty{
+  background:linear-gradient(135deg,#fff6f8,#fff)!important;
+}
+
+/* Master > Slider Home */
+.home-slider-master-section .partner-master-badge{
+  background:#111827;
+  color:#fff;
+}
+.home-slider-image-manager .home-slider-admin-preview{
+  position:relative;
+  overflow:hidden;
+  background:#111827;
+  isolation:isolate;
+}
+.home-slider-admin-preview>span{
+  position:absolute;
+  inset:-12px;
+  z-index:0;
+  background-position:center;
+  background-size:cover;
+  filter:blur(12px);
+  opacity:.75;
+  transform:scale(1.08);
+}
+.home-slider-admin-preview>img{
+  position:relative;
+  z-index:1;
+  width:100%;
+  height:100%;
+  object-fit:contain!important;
+  background:transparent!important;
+}
+.home-slider-list-preview{
+  background:#111827!important;
+}
+.home-slider-list-preview img{
+  object-fit:contain!important;
+}
+.home-slider-admin-list .partner-admin-item{
+  border-left:3px solid #111827;
+}
+
+@media(max-width:900px){
+  .master-home-slide>.hero-slide-fit{
+    object-fit:contain!important;
+  }
+  .hero-slide-blur{
+    inset:-12px;
+    filter:blur(12px) saturate(.95);
+  }
+  .hero-master-overlay{
+    padding:34px 12px 12px!important;
+  }
+  .hero-master-overlay h3{
+    font-size:15px!important;
+    max-width:80%!important;
+  }
+  .hero-master-overlay p{
+    font-size:10px!important;
+    max-width:78%!important;
+  }
+  .hero-master-overlay small{
+    font-size:7px!important;
+    padding:3px 6px!important;
+  }
+}
+
+@media(max-width:600px){
+  .home-slider-image-manager .home-slider-admin-preview{
+    height:190px!important;
+  }
+}
+
+/* =========================================================
+   V2.16.4 — SLIDER MASTER INCORPORADO AO CABEÇALHO
+   Referência mobile: banner logo abaixo da busca, tipo app marketplace.
+   O slider continua exclusivo do Painel Master.
+   ========================================================= */
+.home-topbar-slider{
+  background:#fff!important;
+  border-bottom:0!important;
+}
+.home-topbar-slider .header-home-search{
+  display:flex;
+}
+.home-header-slider-shell{
+  width:min(1280px,calc(100% - 40px));
+  margin:0 auto;
+  padding:0 0 14px;
+}
+.home-header-slider{
+  position:relative;
+  width:100%;
+  height:300px;
+  overflow:hidden;
+  border-radius:22px;
+  background:#f3f4f6;
+  box-shadow:0 8px 26px rgba(15,23,42,.08);
+  isolation:isolate;
+}
+.home-header-slide{
+  position:absolute;
+  inset:0;
+  display:block;
+  overflow:hidden;
+  text-decoration:none;
+  background:#f4f5f7;
+}
+.home-header-slide-bg{
+  position:absolute;
+  inset:-28px;
+  z-index:0;
+  background-position:center;
+  background-size:cover;
+  filter:blur(22px) saturate(.92);
+  transform:scale(1.08);
+  opacity:.72;
+}
+.home-header-slide::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:1;
+  background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,0),rgba(255,255,255,.04));
+  pointer-events:none;
+}
+.home-header-slide-image{
+  position:relative;
+  z-index:2;
+  width:100%;
+  height:100%;
+  display:block;
+  object-fit:contain;
+  object-position:center;
+}
+.home-header-slider-arrow{
+  position:absolute;
+  top:50%;
+  z-index:5;
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  transform:translateY(-50%);
+  border:0;
+  border-radius:50%;
+  background:rgba(255,255,255,.93);
+  color:#111827;
+  box-shadow:0 6px 20px rgba(15,23,42,.14);
+  cursor:pointer;
+}
+.home-header-slider-arrow svg{width:23px;height:23px}
+.home-header-slider-arrow.prev{left:14px}
+.home-header-slider-arrow.next{right:14px}
+.home-header-slider-dots{
+  position:absolute;
+  z-index:6;
+  left:50%;
+  bottom:12px;
+  transform:translateX(-50%);
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:5px 8px;
+  border-radius:999px;
+  background:rgba(15,23,42,.15);
+  backdrop-filter:blur(5px);
+}
+.home-header-slider-dots button{
+  width:7px;
+  height:7px;
+  padding:0;
+  border:0;
+  border-radius:999px;
+  background:rgba(255,255,255,.7);
+  transition:.2s ease;
+  cursor:pointer;
+}
+.home-header-slider-dots button.active{
+  width:20px;
+  background:#fff;
+}
+.home-header-slider-empty{
+  min-height:170px;
+  border-radius:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:4px;
+  background:linear-gradient(120deg,#fff2f5,#fff8fa);
+  color:#64748b;
+  border:1px dashed #fecdd3;
+}
+.home-header-slider-empty strong{color:#111827;font-size:18px}
+.home-header-slider-empty span{font-size:12px}
+
+/* A Home agora começa direto nas categorias; o slider vive no Header. */
+.home-topbar-slider + main .clean-category-section{
+  padding-top:18px!important;
+}
+
+@media (max-width:900px){
+  .home-topbar-slider{
+    position:relative!important;
+    background:#fff!important;
+    box-shadow:0 1px 0 #eceff3!important;
+  }
+  .home-topbar-slider .premium-header-row{
+    position:relative;
+    z-index:10;
+    padding-bottom:8px!important;
+  }
+  .home-topbar-slider .header-home-search,
+  .home-topbar-slider .header-search{
+    background:#fff!important;
+    border:1px solid #e5e7eb!important;
+    box-shadow:0 3px 12px rgba(15,23,42,.07)!important;
+  }
+  .home-header-slider-shell{
+    width:100%;
+    margin:0;
+    padding:0;
+    background:#fff;
+  }
+  .home-header-slider{
+    height:188px;
+    border-radius:0;
+    box-shadow:none;
+    background:#f3f4f6;
+  }
+  .home-header-slide-bg{
+    inset:-20px;
+    filter:blur(18px) saturate(.95);
+    opacity:.7;
+  }
+  .home-header-slide-image{
+    object-fit:contain;
+  }
+  .home-header-slider-arrow{
+    display:none;
+  }
+  .home-header-slider-dots{
+    bottom:8px;
+    gap:5px;
+    padding:4px 7px;
+  }
+  .home-header-slider-dots button{
+    width:6px;
+    height:6px;
+  }
+  .home-header-slider-dots button.active{
+    width:17px;
+  }
+  .home-header-slider-empty{
+    min-height:150px;
+    border-radius:0;
+    border-left:0;
+    border-right:0;
+  }
+  .home-topbar-slider + main .clean-category-section{
+    padding-top:12px!important;
+    margin-top:0!important;
+  }
+}
+
+@media (max-width:520px){
+  .home-header-slider{height:172px}
+}
+.home-header-slide-caption{
+  position:absolute;
+  z-index:4;
+  left:18px;
+  bottom:18px;
+  max-width:min(520px,55%);
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  padding:10px 13px;
+  border-radius:12px;
+  background:rgba(15,23,42,.58);
+  color:#fff;
+  backdrop-filter:blur(8px);
+  pointer-events:none;
+}
+.home-header-slide-caption strong{font-size:16px;line-height:1.15}
+.home-header-slide-caption small{font-size:11px;line-height:1.3;color:rgba(255,255,255,.9)}
+@media(max-width:900px){.home-header-slide-caption{display:none}}
