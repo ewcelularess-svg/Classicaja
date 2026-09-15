@@ -18,6 +18,7 @@ export default function Header(){
   const nav=useNavigate();
   const location=useLocation();
   const isHome=location.pathname==='/' ;
+  const isProduct=location.pathname.startsWith('/produto/');
   const [term,setTerm]=useState('');
   const [city,setCity]=useState('');
 
@@ -29,7 +30,7 @@ export default function Header(){
     nav(`/${params.toString()?`?${params.toString()}`:''}`);
   }
 
-  return <header className={`topbar premium-topbar ${isHome?'home-topbar':''}`}>
+  return <header className={`topbar premium-topbar ${isHome?'home-topbar':''} ${isProduct?'product-topbar':''}`}>
     <div className={`topbar-inner premium-header-row ${isHome?'home-header-row':''}`}>
       <Link className="brand brand-premium" to="/" aria-label="ClassificaJá - Início">
         <img src="/logo-classificaja.png" alt="ClassificaJá" className="brand-logo"/>
