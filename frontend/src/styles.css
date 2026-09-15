@@ -4804,8 +4804,11 @@ body{background:#f7f8fa}
   width:100%;
   height:100%;
   display:block;
-  object-fit:contain;
-  object-position:center;
+  /* Preenche o slider preservando a proporção original da imagem.
+     Não estica: o excedente é recortado pelas bordas. */
+  object-fit:cover;
+  object-position:center center;
+  image-rendering:auto;
 }
 .home-header-slider-arrow{
   position:absolute;
@@ -4910,7 +4913,8 @@ body{background:#f7f8fa}
     opacity:.7;
   }
   .home-header-slide-image{
-    object-fit:contain;
+    object-fit:cover;
+    object-position:center center;
   }
   .home-header-slider-arrow{
     display:none;
@@ -4961,3 +4965,15 @@ body{background:#f7f8fa}
 .home-header-slide-caption strong{font-size:16px;line-height:1.15}
 .home-header-slide-caption small{font-size:11px;line-height:1.3;color:rgba(255,255,255,.9)}
 @media(max-width:900px){.home-header-slide-caption{display:none}}
+
+
+/* =========================================================
+   V2.16.5 — SLIDER FULL-BLEED SEM DISTORÇÃO
+   Preenche 100% do quadro mantendo a proporção da imagem.
+   ========================================================= */
+.home-header-slider .home-header-slide-image{
+  width:100%!important;
+  height:100%!important;
+  object-fit:cover!important;
+  object-position:center center!important;
+}
