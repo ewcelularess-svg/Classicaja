@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {
   BadgeCheck, Ban, CheckCircle2, CircleDollarSign, Crown, Eye, ExternalLink, Flag, Handshake, LayoutDashboard,
-  Headphones, KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud, ImageIcon
+  Headphones, KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud, ImageIcon, ChevronRight
 } from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
@@ -357,9 +357,22 @@ export default function Admin(){
  if(err&&!stats) return <div className="page"><div className="empty"><h3>{err}</h3><button className="primary" onClick={load}>Tentar novamente</button></div></div>;
 
  const metricCards=[
-  ['Contas',stats?.users,<Users/>],['Anúncios',stats?.products,<PackageOpen/>],['Visualizações',stats?.views,<Eye/>],['Destaques ativos',stats?.active_boosts,<Crown/>],['Receita',money(stats?.revenue),<WalletCards/>],['Atendimentos',stats?.open_support_requests,<Headphones/>],['Denúncias',stats?.open_reports,<Flag/>]
+  {label:'Contas',value:stats?.users,icon:<Users/>,target:'users',hint:'Gerenciar contas'},
+  {label:'Anúncios',value:stats?.products,icon:<PackageOpen/>,target:'products',hint:'Gerenciar anúncios'},
+  {label:'Visualizações',value:stats?.views,icon:<Eye/>,target:'views',hint:'Ver ranking'},
+  {label:'Destaques ativos',value:stats?.active_boosts,icon:<Crown/>,target:'boosts',hint:'Ver destaques'},
+  {label:'Receita',value:money(stats?.revenue),icon:<WalletCards/>,target:'payments',hint:'Ver pagamentos'},
+  {label:'Atendimentos',value:stats?.open_support_requests,icon:<Headphones/>,target:'support',hint:'Abrir atendimento'},
+  {label:'Denúncias',value:stats?.open_reports,icon:<Flag/>,target:'reports',hint:'Abrir denúncias'}
  ];
- const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['slider','Slider Home',ImageIcon],['partners','Parcerias',Handshake],['pix','Integrações PIX',Landmark],['support','Atendimento',Headphones],['reports','Denúncias',Flag]];
+ const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['views','Visualizações',Eye],['boosts','Destaques',Crown],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['slider','Slider Home',ImageIcon],['partners','Parcerias',Handshake],['pix','Integrações PIX',Landmark],['support','Atendimento',Headphones],['reports','Denúncias',Flag]];
+ const goToTab=(next)=>{
+   setTab(next);
+   setSearch('');
+   window.requestAnimationFrame(()=>document.querySelector('.master-admin-tabs')?.scrollIntoView({behavior:'smooth',block:'start'}));
+ };
+ const mostViewedProducts=useMemo(()=>[...products].sort((a,b)=>Number(b.views||0)-Number(a.views||0)),[products]);
+ const activeFeaturedProducts=useMemo(()=>products.filter(p=>Boolean(p.featured_active)).sort((a,b)=>Number(b.boost_level||0)-Number(a.boost_level||0)),[products]);
 
  return <div className="page master-admin-page">
   <div className="master-admin-header">
@@ -367,22 +380,32 @@ export default function Admin(){
    <div className="master-admin-badge"><ShieldCheck/> Master Admin</div>
   </div>
 
-  <div className="master-admin-tabs">{tabs.map(([key,label,Icon])=><button key={key} className={tab===key?'active':''} onClick={()=>{setTab(key);setSearch('')}}><Icon/>{label}</button>)}</div>
+  <div className="master-admin-tabs">{tabs.map(([key,label,Icon])=><button key={key} className={tab===key?'active':''} onClick={()=>goToTab(key)}><Icon/>{label}</button>)}</div>
 
   {['users','products','payments'].includes(tab)&&<div className="master-search"><Search/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={tab==='users'?'Buscar nome, e-mail ou telefone':tab==='products'?'Buscar anúncio, vendedor ou cidade':'Buscar pagamento, usuário ou plano'}/></div>}
 
   {tab==='overview'&&<>
-   <div className="metric-grid master-metrics">{metricCards.map(([label,value,icon])=><div className="metric-card" key={label}><span className="metric-icon">{icon}</span><div><b>{value??0}</b><small>{label}</small></div></div>)}</div>
+   <div className="metric-grid master-metrics">{metricCards.map(card=><button type="button" className="metric-card metric-card-link" key={card.label} onClick={()=>goToTab(card.target)} aria-label={`${card.hint}: ${card.label}`}><span className="metric-icon">{card.icon}</span><div className="metric-card-copy"><b>{card.value??0}</b><small>{card.label}</small><em>{card.hint}<ChevronRight/></em></div></button>)}</div>
    <div className="master-overview-grid">
-    <section className="master-overview-card"><h3>Contas</h3><div className="master-stat-line"><span>Ativas</span><b>{stats?.active_users||0}</b></div><div className="master-stat-line"><span>Bloqueadas</span><b>{stats?.blocked_users||0}</b></div><div className="master-stat-line"><span>Administradores</span><b>{stats?.admins||0}</b></div><button onClick={()=>setTab('users')}>Gerenciar contas</button></section>
-    <section className="master-overview-card"><h3>Anúncios</h3><div className="master-stat-line"><span>Ativos</span><b>{stats?.active_products||0}</b></div><div className="master-stat-line"><span>Pausados</span><b>{stats?.paused_products||0}</b></div><div className="master-stat-line"><span>Rejeitados</span><b>{stats?.rejected_products||0}</b></div><button onClick={()=>setTab('products')}>Gerenciar anúncios</button></section>
-    <section className="master-overview-card"><h3>Financeiro</h3><div className="master-stat-line"><span>Pagos</span><b>{stats?.paid_payments||0}</b></div><div className="master-stat-line"><span>Pendentes</span><b>{stats?.pending_payments||0}</b></div><div className="master-stat-line"><span>Receita</span><b>{money(stats?.revenue)}</b></div><button onClick={()=>setTab('payments')}>Ver pagamentos</button></section>
+    <section className="master-overview-card"><h3>Contas</h3><div className="master-stat-line"><span>Ativas</span><b>{stats?.active_users||0}</b></div><div className="master-stat-line"><span>Bloqueadas</span><b>{stats?.blocked_users||0}</b></div><div className="master-stat-line"><span>Administradores</span><b>{stats?.admins||0}</b></div><button onClick={()=>goToTab('users')}>Gerenciar contas</button></section>
+    <section className="master-overview-card"><h3>Anúncios</h3><div className="master-stat-line"><span>Ativos</span><b>{stats?.active_products||0}</b></div><div className="master-stat-line"><span>Pausados</span><b>{stats?.paused_products||0}</b></div><div className="master-stat-line"><span>Rejeitados</span><b>{stats?.rejected_products||0}</b></div><button onClick={()=>goToTab('products')}>Gerenciar anúncios</button></section>
+    <section className="master-overview-card"><h3>Financeiro</h3><div className="master-stat-line"><span>Pagos</span><b>{stats?.paid_payments||0}</b></div><div className="master-stat-line"><span>Pendentes</span><b>{stats?.pending_payments||0}</b></div><div className="master-stat-line"><span>Receita</span><b>{money(stats?.revenue)}</b></div><button onClick={()=>goToTab('payments')}>Ver pagamentos</button></section>
    </div>
   </>}
 
   {tab==='users'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Conta</th><th>Tipo</th><th>Anúncios</th><th>Pagamentos</th><th>Verificação por dado</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map(u=>{const fields=[['email','E-mail',u.email_verified?'verified':'unverified'],['name','Nome',u.name_verification_status||'unverified'],['phone','Telefone',u.phone_verification_status||'unverified'],['address','Endereço',u.address_verification_status||'unverified'],['avatar','Foto',u.avatar_verification_status||'unverified']];return <tr key={u.id}><td><div className="master-user-cell">{u.avatar_url?<img src={imageUrl(u.avatar_url)} alt={u.name}/>:<span className="master-user-avatar-fallback">{(u.name||'U').charAt(0).toUpperCase()}</span>}<div><b>{u.name}</b><small>{u.email}<br/>{u.phone?formatPhoneBR(u.phone):'Sem telefone'}</small></div></div></td><td><span className={`master-role-badge ${u.role==='admin'?'owner':''}`}>{u.role==='admin'?'Master proprietário':'Usuário'}</span></td><td>{u.ad_count}</td><td>{money(u.paid_total)}</td><td><div className="master-user-verification-detail"><div className="master-verification-top"><span className={`master-status ${u.status}`}>{statusLabel(u.status)}</span><span className={`master-profile-overall ${u.role==='admin'||u.verified?'verified':u.profile_review_status==='pending'?'pending':'unverified'}`}>{u.role==='admin'?'Master verificado':u.verified?'Perfil verificado':u.profile_review_status==='pending'?'Revisão em andamento':'Perfil incompleto'}</span></div><div className="master-field-verification-grid">{u.role==='admin'?<div className="master-field-verify verified" style={{gridColumn:'1 / -1',cursor:'default'}}><span>Conta proprietária</span><b>Verificação automática</b></div>:fields.map(([field,label,status])=><button type="button" key={field} className={`master-field-verify ${verificationTone(status)}`} onClick={()=>verifyField(u,field)} title={field==='email'&&u.email_verification_source?`Origem: ${u.email_verification_source}`:`${label}: ${verificationLabel(status)}`}><span>{label}</span><b>{verificationLabel(status)}</b></button>)}</div></div></td><td><div className="master-actions">{u.role!=='admin'&&(u.status==='active'?<button onClick={()=>setUserStatus(u,'blocked')}><Ban/>Bloquear</button>:<button onClick={()=>setUserStatus(u,'active')}><CheckCircle2/>Ativar</button>)}{u.role!=='admin'&&<button className="danger-lite-btn" onClick={()=>deleteUser(u)}><Trash2/>Excluir</button>}</div></td></tr>})}</tbody></table></div>}
 
   {tab==='products'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Anúncio</th><th>Vendedor</th><th>Local</th><th>Status</th><th>Destaque</th><th>Ações</th></tr></thead><tbody>{filteredProducts.map(p=><tr key={p.id}><td><Link to={`/produto/${p.id}`}><b>{p.title}</b></Link><small>{money(p.price)} • {p.views||0} visualizações</small></td><td><b>{p.seller_name||p.seller?.name||'—'}</b><small>{p.seller_email||''}</small></td><td>{p.city}/{p.state}</td><td><select value={p.status} onChange={e=>setProductStatus(p.id,e.target.value)}><option value="active">Ativo</option><option value="paused">Pausado</option><option value="rejected">Rejeitado</option><option value="sold">Vendido</option></select></td><td>{p.featured_active?<span className="master-status paid">Ativo</span>:<span className="master-status neutral">Normal</span>}</td><td><div className="master-actions"><Link className="master-link-btn" to={`/produto/${p.id}`}><Eye/>Abrir</Link><button className="danger-lite-btn" onClick={()=>deleteProduct(p)}><Trash2/>Excluir</button></div></td></tr>)}</tbody></table></div>}
+
+  {tab==='views'&&<section className="master-insight-section">
+    <div className="master-insight-head"><div><span className="section-kicker">DESEMPENHO</span><h2>Ranking de visualizações</h2><p>Veja quais anúncios estão atraindo mais acessos e identifique os produtos com maior interesse.</p></div><div className="master-insight-total"><Eye/><b>{stats?.views||0}</b><span>visualizações totais</span></div></div>
+    <div className="master-table-wrap"><table className="master-table"><thead><tr><th>#</th><th>Anúncio</th><th>Vendedor</th><th>Local</th><th>Visualizações</th><th>Status</th><th>Ação</th></tr></thead><tbody>{mostViewedProducts.map((p,index)=><tr key={p.id}><td><b>{index+1}</b></td><td><Link to={`/produto/${p.id}`}><b>{p.title}</b></Link><small>{money(p.price)}</small></td><td><b>{p.seller_name||p.seller?.name||'—'}</b><small>{p.seller_email||''}</small></td><td>{p.city}/{p.state}</td><td><span className="master-view-count"><Eye/>{Number(p.views||0).toLocaleString('pt-BR')}</span></td><td><span className={`master-status ${p.status}`}>{statusLabel(p.status)}</span></td><td><Link className="master-link-btn" to={`/produto/${p.id}`}><ExternalLink/>Abrir</Link></td></tr>)}</tbody></table>{!mostViewedProducts.length&&<div className="empty"><h3>Nenhum anúncio para analisar</h3></div>}</div>
+  </section>}
+
+  {tab==='boosts'&&<section className="master-insight-section">
+    <div className="master-insight-head"><div><span className="section-kicker">DESTAQUES</span><h2>Anúncios em destaque</h2><p>Acompanhe todos os anúncios que possuem destaque ativo no ClassificaJá.</p></div><div className="master-insight-total highlight"><Crown/><b>{activeFeaturedProducts.length}</b><span>destaques ativos</span></div></div>
+    <div className="master-table-wrap"><table className="master-table"><thead><tr><th>Anúncio</th><th>Vendedor</th><th>Nível</th><th>Visualizações</th><th>Status</th><th>Ação</th></tr></thead><tbody>{activeFeaturedProducts.map(p=><tr key={p.id}><td><Link to={`/produto/${p.id}`}><b>{p.title}</b></Link><small>{money(p.price)}</small></td><td><b>{p.seller_name||p.seller?.name||'—'}</b><small>{p.seller_email||''}</small></td><td><span className="master-status paid"><Crown/> Nível {Number(p.boost_level||1)}</span></td><td>{Number(p.views||0).toLocaleString('pt-BR')}</td><td><span className={`master-status ${p.status}`}>{statusLabel(p.status)}</span></td><td><Link className="master-link-btn" to={`/produto/${p.id}`}><ExternalLink/>Abrir</Link></td></tr>)}</tbody></table>{!activeFeaturedProducts.length&&<div className="empty"><h3>Nenhum destaque ativo</h3><p>Quando um anúncio receber destaque, ele aparecerá aqui.</p></div>}</div>
+  </section>}
 
   {tab==='plans'&&<div className="master-plans-grid">{plans.map(p=><PlanEditor key={p.code} plan={p} onSaved={load}/>)}</div>}
 

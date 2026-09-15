@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.10
+# ClassificaJá V2.18.11
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.10 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.11 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
 
 ## Fluxo direto de publicação — V2.18.9
 
@@ -59,13 +59,13 @@ API/docs: `http://localhost:8000/docs`
 
 ## Produção — GitHub + Railway
 
-O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para a V2.18.10.
+O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para a V2.18.11.
 
 Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.10"`.
+A resposta deve indicar `"version":"2.18.11"`.
 
 ## Migração automática
 
@@ -107,7 +107,7 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - O bloco recebeu acabamento premium: moldura suave, faixa de destaque, selo, sombra, CTA e navegação refinados.
 
 
-## Rodapé e Central de Atendimento — V2.18.10
+## Rodapé e Central de Atendimento — V2.18.11
 
 - Rodapé profissional com atalhos para **Reclamações**, **Suporte** e **Sugestão**.
 - Cada opção abre uma central de atendimento com formulário próprio.
@@ -115,3 +115,31 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - Cada envio recebe um protocolo curto e fica registrado no banco.
 - Novo menu **Painel Master → Atendimento** para visualizar e resolver solicitações.
 - Botão flutuante de **voltar ao topo** aparece após a rolagem e respeita a navegação fixa do mobile.
+
+
+## Painel Master interativo — V2.18.11
+
+Os cards principais da Visão geral agora funcionam como atalhos reais:
+
+- **Contas** → gerenciamento de contas.
+- **Anúncios** → gerenciamento de anúncios.
+- **Visualizações** → ranking dos anúncios mais vistos.
+- **Destaques ativos** → relação dos anúncios com destaque ativo.
+- **Receita** → pagamentos e financeiro.
+- **Atendimentos** → Central de Atendimento.
+- **Denúncias** → moderação de denúncias.
+
+Os cards receberam estados de hover/foco e indicação visual de ação. Não há nova variável de ambiente para esta atualização.
+
+
+## Painel do usuário interativo — V2.18.11
+
+Os blocos de métricas da visão geral também são atalhos funcionais:
+
+- **Anúncios** abre Meus anúncios;
+- **Ativos** abre Meus anúncios filtrando somente os ativos;
+- **Visualizações** abre os anúncios ordenados do mais visto para o menos visto;
+- **Favoritos recebidos** abre os anúncios ordenados pelo número de favoritos;
+- **Mensagens não lidas** abre o Chat.
+
+A tela **Meus anúncios** passou a exibir visualizações e favoritos recebidos por anúncio e entende os filtros/ordenações vindos do painel.

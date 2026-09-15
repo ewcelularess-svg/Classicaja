@@ -167,7 +167,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.18.10")
+app = FastAPI(title="ClassificaJá API", version="2.18.11")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -2067,7 +2067,7 @@ def products_to_dicts(db, rows, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.18.10", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.11", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -2995,7 +2995,15 @@ def my_products(user=Depends(current_user)):
     with conn() as db:
         cleanup_expired_features(db)
         db.commit()
-        rows = db.execute("SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC", (user["id"],)).fetchall()
+        rows = db.execute(
+            """SELECT p.*, COUNT(f.user_id) AS favorites_received
+               FROM products p
+               LEFT JOIN favorites f ON f.product_id=p.id
+               WHERE p.seller_id=?
+               GROUP BY p.id
+               ORDER BY p.created_at DESC""",
+            (user["id"],),
+        ).fetchall()
         return products_to_dicts(db, rows, user["id"])
 
 

@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {AlertTriangle, ArrowUpCircle, BadgeCheck, Camera, Check, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, LogOut, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
+import {AlertTriangle, ArrowUpCircle, BadgeCheck, Camera, Check, ChevronRight, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, LogOut, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
 import {Link, useLocation, useNavigate} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
 import {useAuth} from '../main';
@@ -87,7 +87,11 @@ export default function Dashboard(){
  if(!s) return <div className="loading">Carregando painel...</div>;
 
  const cards=[
-  ['Anúncios',s.total,<PackageOpen/>],['Ativos',s.active,<PackageCheck/>],['Visualizações',s.views,<Eye/>],['Favoritos recebidos',s.favorites_received,<Heart/>],['Mensagens não lidas',s.unread_messages,<MessageCircle/>]
+  {label:'Anúncios',value:s.total,icon:<PackageOpen/>,to:'/meus-anuncios',hint:'Gerenciar anúncios'},
+  {label:'Ativos',value:s.active,icon:<PackageCheck/>,to:'/meus-anuncios?status=active',hint:'Ver anúncios ativos'},
+  {label:'Visualizações',value:s.views,icon:<Eye/>,to:'/meus-anuncios?sort=views',hint:'Ver mais visualizados'},
+  {label:'Favoritos recebidos',value:s.favorites_received,icon:<Heart/>,to:'/meus-anuncios?sort=favorites',hint:'Ver mais favoritados'},
+  {label:'Mensagens não lidas',value:s.unread_messages,icon:<MessageCircle/>,to:'/mensagens?unread=1',hint:'Abrir mensagens'}
  ];
  const summary=s.plan_summary||{};
  const featuredAds=summary.featured_ads||[];
@@ -237,7 +241,7 @@ export default function Dashboard(){
   </nav>
 
   {activeTab==='overview'&&<>
-    <div className="metric-grid compact-dashboard-metrics">{cards.map(([label,value,icon])=><div className="metric-card" key={label}><span className="metric-icon">{icon}</span><div><b>{value}</b><small>{label}</small></div></div>)}</div>
+    <div className="metric-grid compact-dashboard-metrics">{cards.map(card=><Link className="metric-card metric-card-link user-metric-link" key={card.label} to={card.to} aria-label={`${card.hint}: ${card.label}`}><span className="metric-icon">{card.icon}</span><div className="metric-card-copy"><b>{card.value}</b><small>{card.label}</small><em>{card.hint}<ChevronRight/></em></div></Link>)}</div>
     <div className="dashboard-actions compact-dashboard-actions"><Link to="/meus-anuncios"><b>Gerenciar anúncios</b><span>Editar, pausar ou destacar.</span></Link><Link to="/mensagens"><b>Abrir mensagens</b><span>Conversas com compradores.</span></Link><Link to="/favoritos"><b>Ver favoritos</b><span>Produtos que você salvou.</span></Link></div>
     {expiringAds.length>0 && <div className="plan-expiry-alert"><AlertTriangle/><div><b>{expiringAds.length===1?'Seu plano está perto de vencer':'Você tem planos perto de vencer'}</b><span>{expiringAds.map(item=>`${item.title} (${item.days_left ?? 0} dia${item.days_left===1?'':'s'})`).join(' • ')}</span></div></div>}
   </>}
