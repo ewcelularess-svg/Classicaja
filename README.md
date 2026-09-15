@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.9
+# ClassificaJá V2.18.10
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.8 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.10 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
 
 ## Fluxo direto de publicação — V2.18.9
 
@@ -59,13 +59,13 @@ API/docs: `http://localhost:8000/docs`
 
 ## Produção — GitHub + Railway
 
-O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para migrar da V2.18.1 para a V2.18.2.
+O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para a V2.18.10.
 
 Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.9"`.
+A resposta deve indicar `"version":"2.18.10"`.
 
 ## Migração automática
 
@@ -105,3 +105,13 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - Desktop grande: largura máxima de 1080 px e altura de 360 px.
 - Mobile: proporção 16:10, mantendo a foto inteira e responsiva.
 - O bloco recebeu acabamento premium: moldura suave, faixa de destaque, selo, sombra, CTA e navegação refinados.
+
+
+## Rodapé e Central de Atendimento — V2.18.10
+
+- Rodapé profissional com atalhos para **Reclamações**, **Suporte** e **Sugestão**.
+- Cada opção abre uma central de atendimento com formulário próprio.
+- Usuários logados têm nome/e-mail vinculados automaticamente; visitantes também podem enviar informando os dados.
+- Cada envio recebe um protocolo curto e fica registrado no banco.
+- Novo menu **Painel Master → Atendimento** para visualizar e resolver solicitações.
+- Botão flutuante de **voltar ao topo** aparece após a rolagem e respeita a navegação fixa do mobile.

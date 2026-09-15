@@ -1,0 +1,12 @@
+CLASSIFICAJÁ V2.18.10 — GITHUB + RAILWAY
+
+1. Extraia o ZIP de arquivos alterados.
+2. Envie as pastas/arquivos extraídos para a raiz do repositório GitHub, substituindo os existentes.
+3. Não envie o ZIP fechado para dentro do repositório.
+4. Faça o commit na branch main.
+5. O Railway inicia o deploy automaticamente.
+6. Aguarde Deployment successful.
+7. Abra https://www.classificaja.com.br/api/health
+8. Esperado: "version":"2.18.10"
+9. Teste o rodapé e envie uma mensagem de suporte.
+10. Confirme no Painel Master > Atendimento.

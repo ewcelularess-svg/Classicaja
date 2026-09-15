@@ -1,0 +1,13 @@
+CLASSIFICAJÁ V2.18.10 — RODAPÉ E CENTRAL DE ATENDIMENTO
+
+NOVO:
+- Rodapé profissional.
+- Reclamações.
+- Suporte.
+- Sugestão.
+- Botão de voltar ao topo.
+- Protocolos de atendimento.
+- Painel Master > Atendimento.
+
+Não é necessário criar novas variáveis no Railway.
+Após o deploy confirme /api/health com version 2.18.10.

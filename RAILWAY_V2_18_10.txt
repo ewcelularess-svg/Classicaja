@@ -1,0 +1,5 @@
+CLASSIFICAJÁ V2.18.10 — RAILWAY
+
+Nenhuma variável nova é obrigatória.
+A migração do banco ocorre automaticamente no startup.
+Após o deploy, confirme /api/health com version 2.18.10.

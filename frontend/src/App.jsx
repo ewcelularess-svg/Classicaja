@@ -2,6 +2,7 @@ import React from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Header from './components/Header';
 import BottomNav from './components/BottomNav';
+import Footer from './components/Footer';
 import Home from './pages/Home';
 import Product from './pages/Product';
 import Publish from './pages/Publish';
@@ -14,6 +15,7 @@ import Chat from './pages/Chat';
 import Boost from './pages/Boost';
 import Admin from './pages/Admin';
 import PlanChoice from './pages/PlanChoice';
+import Support from './pages/Support';
 import { useAuth } from './main';
 import { api } from './lib/api';
 
@@ -73,5 +75,6 @@ export default function App(){
     <Route path="/destaque/:id" element={<Protected><Boost/></Protected>}/>
     <Route path="/admin" element={<AdminOnly><Admin/></AdminOnly>}/>
     <Route path="/entrar" element={<Auth/>}/>
-  </Routes></main><BottomNav/></div>
+    <Route path="/atendimento" element={<Support/>}/>
+  </Routes></main><Footer/><BottomNav/></div>
 }

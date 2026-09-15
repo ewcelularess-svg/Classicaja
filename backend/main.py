@@ -167,7 +167,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.18.9")
+app = FastAPI(title="ClassificaJá API", version="2.18.10")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -190,6 +190,7 @@ _RATE_RULES = [
     ("POST", "/api/auth/forgot-password", 5, 900),
     ("POST", "/api/auth/resend-verification", 5, 900),
     ("POST", "/api/payments", 10, 60),
+    ("POST", "/api/support-requests", 8, 3600),
     ("POST_PREFIX", "/api/products/", 80, 60),
     ("GET_PREFIX", "/api/products/", 180, 60),
     ("POST_PREFIX", "/api/conversations/", 60, 60),
@@ -647,6 +648,19 @@ def init_db():
               FOREIGN KEY(reporter_id) REFERENCES users(id) ON DELETE CASCADE,
               FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS support_requests (
+              id TEXT PRIMARY KEY,
+              user_id TEXT,
+              category TEXT NOT NULL,
+              name TEXT NOT NULL,
+              email TEXT NOT NULL,
+              subject TEXT NOT NULL,
+              message TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'open',
+              created_at TEXT NOT NULL,
+              resolved_at TEXT,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
             CREATE TABLE IF NOT EXISTS payment_orders (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -917,6 +931,8 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_conversations_seller_updated ON conversations(seller_id, updated_at)",
             "CREATE INDEX IF NOT EXISTS idx_notifications_target_created ON notifications(target_user_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_support_requests_status_created ON support_requests(status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_support_requests_category_created ON support_requests(category, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_payment_orders_user_status ON payment_orders(user_id, status)",
             "CREATE INDEX IF NOT EXISTS idx_payment_orders_external ON payment_orders(external_id)",
             "CREATE INDEX IF NOT EXISTS idx_entitlements_user_status ON publish_entitlements(user_id, status, selected_at)",
@@ -1152,6 +1168,14 @@ class MessageIn(BaseModel):
 class ReportIn(BaseModel):
     reason: str
     details: str = ""
+
+
+class SupportRequestIn(BaseModel):
+    category: str
+    name: str = ""
+    email: str = ""
+    subject: str
+    message: str
 
 
 class PaymentIn(BaseModel):
@@ -2043,7 +2067,7 @@ def products_to_dicts(db, rows, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.18.9", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.10", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -3860,6 +3884,66 @@ def my_payments(user=Depends(current_user)):
     return result
 
 
+# Atendimento / rodapé -------------------------------------------------------
+@app.post("/api/support-requests")
+def create_support_request(payload: SupportRequestIn, user=Depends(optional_user)):
+    category = str(payload.category or "").strip().lower()
+    if category not in {"complaint", "support", "suggestion"}:
+        raise HTTPException(400, "Tipo de atendimento inválido")
+
+    subject = str(payload.subject or "").strip()[:180]
+    message = str(payload.message or "").strip()[:4000]
+    if len(subject) < 3:
+        raise HTTPException(400, "Informe um assunto com pelo menos 3 caracteres")
+    if len(message) < 10:
+        raise HTTPException(400, "Descreva sua mensagem com pelo menos 10 caracteres")
+
+    if user:
+        name = str(user.get("name") or payload.name or "Usuário ClassificaJá").strip()[:120]
+        email = str(user.get("email") or payload.email or "").strip().lower()[:200]
+        user_id = user.get("id")
+    else:
+        name = str(payload.name or "").strip()[:120]
+        email = str(payload.email or "").strip().lower()[:200]
+        user_id = None
+        if len(name) < 2:
+            raise HTTPException(400, "Informe seu nome")
+        if "@" not in email or "." not in email.split("@", 1)[-1]:
+            raise HTTPException(400, "Informe um e-mail válido")
+
+    request_id = str(uuid.uuid4())
+    with conn() as db:
+        db.execute(
+            """INSERT INTO support_requests(id,user_id,category,name,email,subject,message,status,created_at,resolved_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (request_id, user_id, category, name, email, subject, message, "open", now_iso(), None),
+        )
+        db.commit()
+    return {"ok": True, "id": request_id, "protocol": request_id.split("-", 1)[0].upper()}
+
+
+@app.get("/api/admin/support-requests")
+def admin_support_requests(user=Depends(admin_user)):
+    with conn() as db:
+        rows = db.execute(
+            """SELECT s.*, u.phone user_phone
+               FROM support_requests s LEFT JOIN users u ON u.id=s.user_id
+               ORDER BY CASE WHEN s.status='open' THEN 0 ELSE 1 END, s.created_at DESC
+               LIMIT 500"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.put("/api/admin/support-requests/{request_id}/resolve")
+def admin_resolve_support_request(request_id: str, user=Depends(admin_user)):
+    with conn() as db:
+        db.execute("UPDATE support_requests SET status='resolved',resolved_at=? WHERE id=?", (now_iso(), request_id))
+        if db.total_changes == 0:
+            raise HTTPException(404, "Atendimento não encontrado")
+        db.commit()
+    return {"ok": True}
+
+
 # Admin ----------------------------------------------------------------------
 @app.get("/api/admin/stats")
 def admin_stats(user=Depends(admin_user)):
@@ -3878,6 +3962,7 @@ def admin_stats(user=Depends(admin_user)):
             "rejected_products": n("SELECT COUNT(*) n FROM products WHERE status='rejected'"),
             "sold_products": n("SELECT COUNT(*) n FROM products WHERE status='sold'"),
             "open_reports": n("SELECT COUNT(*) n FROM reports WHERE status='open'"),
+            "open_support_requests": n("SELECT COUNT(*) n FROM support_requests WHERE status='open'"),
             "revenue": n("SELECT COALESCE(SUM(amount),0) n FROM payment_orders WHERE status='paid'"),
             "paid_payments": n("SELECT COUNT(*) n FROM payment_orders WHERE status='paid'"),
             "pending_payments": n("SELECT COUNT(*) n FROM payment_orders WHERE status='pending'"),

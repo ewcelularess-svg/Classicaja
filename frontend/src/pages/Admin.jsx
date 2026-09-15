@@ -1,14 +1,16 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {
   BadgeCheck, Ban, CheckCircle2, CircleDollarSign, Crown, Eye, ExternalLink, Flag, Handshake, LayoutDashboard,
-  KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud, ImageIcon
+  Headphones, KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud, ImageIcon
 } from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
 
 const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const date=v=>v?new Date(v).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}):'—';
-const statusLabel=s=>({active:'Ativo',blocked:'Bloqueado',paused:'Pausado',rejected:'Rejeitado',sold:'Vendido',open:'Aberta',resolved:'Resolvida',paid:'Pago',pending:'Pendente',cancelled:'Cancelado'}[s]||s);
+const statusLabel=s=>({active:'Ativo',blocked:'Bloqueado',paused:'Pausado',rejected:'Rejeitado',sold:'Vendido',open:'Aberto',resolved:'Resolvido',paid:'Pago',pending:'Pendente',cancelled:'Cancelado'}[s]||s);
+const supportLabel=s=>({complaint:'Reclamação',support:'Suporte',suggestion:'Sugestão'}[s]||s);
+const supportTone=s=>({complaint:'rejected',support:'pending',suggestion:'paid'}[s]||'neutral');
 
 const verificationLabel=s=>({verified:'Verificado',pending:'Em análise',unverified:'Não verificado'}[s]||'Não verificado');
 const verificationTone=s=>s==='verified'?'verified':s==='pending'?'pending':'unverified';
@@ -21,7 +23,7 @@ const formatPhoneBR=(value)=>{
 
 function PlanEditor({plan,onSaved}){
   const [form,setForm]=useState(()=>({
-    name:plan.name||'', amount:plan.amount??0, days:plan.days??0, active:Boolean(plan.active),
+    name:plan.name||'', amount:plan.amount??0, days:plan.days??0, ad_limit:plan.ad_limit??1, active:Boolean(plan.active),
     badge:plan.badge||'', tagline:plan.tagline||'', features:(plan.features||[]).join('\n'), limitations:(plan.limitations||[]).join('\n')
   }));
   const [busy,setBusy]=useState(false);
@@ -32,6 +34,7 @@ function PlanEditor({plan,onSaved}){
         ...form,
         amount:Number(form.amount||0),
         days:Number(form.days||0),
+        ad_limit:Math.max(1,Number(form.ad_limit||1)),
         features:String(form.features||'').split('\n').map(x=>x.trim()).filter(Boolean),
         limitations:String(form.limitations||'').split('\n').map(x=>x.trim()).filter(Boolean),
       };
@@ -46,6 +49,7 @@ function PlanEditor({plan,onSaved}){
       <label>Nome<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label>
       <label>Preço (R$)<input type="number" min="0" step="0.01" value={form.amount} disabled={plan.free} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
       <label>Duração (dias)<input type="number" min="0" value={form.days} onChange={e=>setForm({...form,days:e.target.value})}/><small className="field-help">Defina livremente a duração do plano grátis.</small></label>
+      <label>Limite de anúncios<input type="number" min="1" value={form.ad_limit} onChange={e=>setForm({...form,ad_limit:e.target.value})}/><small className="field-help">Quantidade máxima de anúncios cadastrados por conta neste plano.</small></label>
       <label>Selo<input value={form.badge} onChange={e=>setForm({...form,badge:e.target.value})}/></label>
     </div>
     <label className="master-wide-label">Descrição<input value={form.tagline} onChange={e=>setForm({...form,tagline:e.target.value})}/></label>
@@ -307,6 +311,7 @@ export default function Admin(){
  const [products,setProducts]=useState([]);
  const [users,setUsers]=useState([]);
  const [reports,setReports]=useState([]);
+ const [supportRequests,setSupportRequests]=useState([]);
  const [plans,setPlans]=useState([]);
  const [payments,setPayments]=useState([]);
  const [integrations,setIntegrations]=useState([]);
@@ -320,10 +325,10 @@ export default function Admin(){
  const load=async()=>{
   setLoading(true); setErr('');
   try{
-   const [s,p,u,r,pl,py,ix,pa,hs]=await Promise.all([
-    api('/api/admin/stats'),api('/api/admin/products'),api('/api/admin/users'),api('/api/admin/reports'),api('/api/admin/plans'),api('/api/admin/payments'),api('/api/admin/payment-integrations'),api('/api/admin/partner-ads'),api('/api/admin/home-slides')
+   const [s,p,u,r,sr,pl,py,ix,pa,hs]=await Promise.all([
+    api('/api/admin/stats'),api('/api/admin/products'),api('/api/admin/users'),api('/api/admin/reports'),api('/api/admin/support-requests'),api('/api/admin/plans'),api('/api/admin/payments'),api('/api/admin/payment-integrations'),api('/api/admin/partner-ads'),api('/api/admin/home-slides')
    ]);
-   setStats(s);setProducts(p);setUsers(u);setReports(r);setPlans(pl);setPayments(py);setIntegrations(ix);setPartners(pa);setSlides(hs);
+   setStats(s);setProducts(p);setUsers(u);setReports(r);setSupportRequests(sr);setPlans(pl);setPayments(py);setIntegrations(ix);setPartners(pa);setSlides(hs);
   }catch(e){setErr(e.message)}finally{setLoading(false)}
  };
  useEffect(()=>{load()},[]);
@@ -345,15 +350,16 @@ export default function Admin(){
  const setUserStatus=async(u,status)=>{if(status==='blocked'&&!confirm(`Bloquear a conta de ${u.name}?`))return;try{await api(`/api/admin/users/${u.id}/status`,{method:'PUT',body:JSON.stringify({status})});load()}catch(e){alert(e.message)}};
  const deleteUser=async u=>{if(!confirm(`EXCLUIR definitivamente a conta de ${u.name}? Os anúncios e dados relacionados serão removidos.`))return;try{await api(`/api/admin/users/${u.id}`,{method:'DELETE'});load()}catch(e){alert(e.message)}};
  const resolve=async id=>{try{await api(`/api/admin/reports/${id}/resolve`,{method:'PUT'});load()}catch(e){alert(e.message)}};
+ const resolveSupport=async id=>{try{await api(`/api/admin/support-requests/${id}/resolve`,{method:'PUT'});load()}catch(e){alert(e.message)}};
  const cancelPayment=async p=>{if(!confirm('Cancelar este pagamento pendente?'))return;try{await api(`/api/admin/payments/${p.id}/cancel`,{method:'POST'});load()}catch(e){alert(e.message)}};
 
  if(loading&&!stats) return <div className="loading">Carregando Painel Master...</div>;
  if(err&&!stats) return <div className="page"><div className="empty"><h3>{err}</h3><button className="primary" onClick={load}>Tentar novamente</button></div></div>;
 
  const metricCards=[
-  ['Contas',stats?.users,<Users/>],['Anúncios',stats?.products,<PackageOpen/>],['Visualizações',stats?.views,<Eye/>],['Destaques ativos',stats?.active_boosts,<Crown/>],['Receita',money(stats?.revenue),<WalletCards/>],['Denúncias',stats?.open_reports,<Flag/>]
+  ['Contas',stats?.users,<Users/>],['Anúncios',stats?.products,<PackageOpen/>],['Visualizações',stats?.views,<Eye/>],['Destaques ativos',stats?.active_boosts,<Crown/>],['Receita',money(stats?.revenue),<WalletCards/>],['Atendimentos',stats?.open_support_requests,<Headphones/>],['Denúncias',stats?.open_reports,<Flag/>]
  ];
- const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['slider','Slider Home',ImageIcon],['partners','Parcerias',Handshake],['pix','Integrações PIX',Landmark],['reports','Denúncias',Flag]];
+ const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['slider','Slider Home',ImageIcon],['partners','Parcerias',Handshake],['pix','Integrações PIX',Landmark],['support','Atendimento',Headphones],['reports','Denúncias',Flag]];
 
  return <div className="page master-admin-page">
   <div className="master-admin-header">
@@ -391,6 +397,8 @@ export default function Admin(){
     <div className="pix-provider-grid">{integrations.map(item=><PaymentIntegrationCard key={item.provider} integration={item} onSaved={load}/>)}</div>
     <div className="pix-master-note"><b>Importante:</b> no PagBank, o checkout PIX é exibido dentro do ClassificaJá em forma de QR Code e código Copia e Cola. Salvar o token não redireciona o navegador para o PagBank.</div>
   </section>}
+
+  {tab==='support'&&<div className="master-table-wrap"><table className="master-table master-support-table"><thead><tr><th>Tipo</th><th>Contato</th><th>Assunto</th><th>Mensagem</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody>{supportRequests.map(item=><tr key={item.id}><td><span className={`master-status ${supportTone(item.category)}`}>{supportLabel(item.category)}</span></td><td><b>{item.name}</b><small>{item.email}{item.user_phone?` • ${formatPhoneBR(item.user_phone)}`:''}</small></td><td><b>{item.subject}</b><small>Protocolo: {String(item.id||'').split('-',1)[0].toUpperCase()}</small></td><td><span className="master-support-message">{item.message}</span></td><td><span className={`master-status ${item.status}`}>{statusLabel(item.status)}</span></td><td>{date(item.created_at)}</td><td>{item.status==='open'?<button className="secondary-btn" onClick={()=>resolveSupport(item.id)}>Resolver</button>:'—'}</td></tr>)}</tbody></table>{!supportRequests.length&&<div className="empty"><h3>Nenhum atendimento recebido</h3><p>Reclamações, pedidos de suporte e sugestões aparecerão aqui.</p></div>}</div>}
 
   {tab==='reports'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Anúncio</th><th>Denunciante</th><th>Motivo</th><th>Detalhes</th><th>Status</th><th>Ação</th></tr></thead><tbody>{reports.map(r=><tr key={r.id}><td><b>{r.product_title}</b></td><td>{r.reporter_name}</td><td>{r.reason}</td><td>{r.details||'—'}</td><td><span className={`master-status ${r.status}`}>{statusLabel(r.status)}</span></td><td>{r.status==='open'?<button className="secondary-btn" onClick={()=>resolve(r.id)}>Resolver</button>:'—'}</td></tr>)}</tbody></table></div>}
  </div>
