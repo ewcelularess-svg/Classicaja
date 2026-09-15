@@ -120,8 +120,8 @@ export default function Header(){
       </div>
     </div>
 
-    {isHome&&<div className="home-header-slider-shell" aria-label="Destaques do ClassificaJá">
-      {activeSlide&&activeImage?<div className="home-header-slider">
+    {isHome&&activeSlide&&activeImage&&<div className="home-header-slider-shell" aria-label="Destaques do ClassificaJá">
+      <div className="home-header-slider">
         {activeSlide.target_url?<a className="home-header-slide" href={activeSlide.target_url} target="_blank" rel="noreferrer sponsored" aria-label={activeSlide.title||'Abrir destaque'}>{slideVisual}</a>:<div className="home-header-slide">{slideVisual}</div>}
         {slides.length>1&&<>
           <button type="button" className="home-header-slider-arrow prev" onClick={()=>moveSlide(-1)} aria-label="Banner anterior"><ChevronLeft/></button>
@@ -130,10 +130,7 @@ export default function Header(){
             {slides.map((item,index)=><button key={item.id} type="button" className={index===slideIndex?'active':''} onClick={()=>setSlideIndex(index)} aria-label={`Mostrar banner ${index+1}`}/>)}
           </div>
         </>}
-      </div>:<div className="home-header-slider-empty">
-        <strong>ClassificaJá</strong>
-        <span>Cadastre banners em Master → Slider Home.</span>
-      </div>}
+      </div>
     </div>}
 
     <div className="header-subnav">
