@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
-import {AlertTriangle, ArrowUpCircle, BadgeCheck, Camera, Check, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
-import {Link} from 'react-router-dom';
+import {AlertTriangle, ArrowUpCircle, BadgeCheck, Camera, Check, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, LogOut, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
+import {Link, useLocation, useNavigate} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
 import {useAuth} from '../main';
 
@@ -12,12 +12,19 @@ const formatDate=(value)=>{
 };
 const statusLabel=(status)=>({paid:'Pago',pending:'Pendente',cancelled:'Cancelado',failed:'Falhou'}[status]||status);
 
+const phoneDigitsBR=(value)=>{
+  let d=String(value||'').replace(/\D/g,'');
+  // Aceita números vindos como +55 / 55 e mantém somente DDD + número.
+  if(d.startsWith('55') && d.length>11) d=d.slice(2);
+  return d.slice(0,11);
+};
 const formatPhoneBR=(value)=>{
-  const d=String(value||'').replace(/\D/g,'').slice(0,11);
-  if(d.length<=2) return d;
+  const d=phoneDigitsBR(value);
+  if(!d) return '';
+  if(d.length<=2) return `(${d}`;
   if(d.length<=6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
   if(d.length<=10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
-  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7,11)}`;
 };
 const verificationMeta=(status)=>({
   verified:{label:'Verificado',tone:'verified'},
@@ -26,8 +33,10 @@ const verificationMeta=(status)=>({
 }[status]||{label:'Não verificado',tone:'unverified'});
 
 export default function Dashboard(){
- const {refreshUser}=useAuth();
- const [activeTab,setActiveTab]=useState('overview');
+ const {refreshUser,logout}=useAuth();
+ const nav=useNavigate();
+ const location=useLocation();
+ const [activeTab,setActiveTab]=useState(()=>new URLSearchParams(window.location.search).get('tab')==='profile'?'profile':'overview');
  const [profile,setProfile]=useState(null);
  const [profileForm,setProfileForm]=useState({name:'',phone:'',address_line:'',neighborhood:'',city:'',state:'',postal_code:'',current_password:''});
  const [profileBusy,setProfileBusy]=useState(false);
@@ -265,6 +274,11 @@ export default function Dashboard(){
         <label>Confirmar nova senha<input type="password" minLength="8" value={passwordForm.confirm_password} onChange={e=>setPasswordForm({...passwordForm,confirm_password:e.target.value})} required/></label>
         <button className="primary" disabled={passwordBusy}>{passwordBusy?(profile?.has_password?'Alterando...':'Criando...'):(profile?.has_password?'Alterar senha':'Criar senha')}</button>
       </form>
+
+      <div className="profile-card-v2165 account-session-card">
+        <div className="profile-card-title"><LogOut/><div><h2>Sessão e acesso</h2><p>Encerre sua sessão neste aparelho com segurança.</p></div></div>
+        <button type="button" className="account-logout-btn" onClick={()=>{if(window.confirm('Deseja sair da sua conta?')){logout();nav('/')}}}><LogOut/>Sair da conta</button>
+      </div>
     </div>
   </section>}
 

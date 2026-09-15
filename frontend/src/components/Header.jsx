@@ -22,10 +22,16 @@ export default function Header(){
   const location=useLocation();
   const isHome=location.pathname==='/' ;
   const isProduct=location.pathname.startsWith('/produto/');
+  const hideFloatingPublish=[
+    '/entrar','/cadastro','/escolher-plano','/anunciar','/novo-anuncio'
+  ].some(path=>location.pathname===path || location.pathname.startsWith(`${path}/`)) || isProduct;
   const [term,setTerm]=useState('');
   const [city,setCity]=useState('');
   const [slides,setSlides]=useState([]);
   const [slideIndex,setSlideIndex]=useState(0);
+  const [profileMenuOpen,setProfileMenuOpen]=useState(false);
+
+  useEffect(()=>setProfileMenuOpen(false),[location.pathname]);
 
   useEffect(()=>{
     if(!isHome){
@@ -94,10 +100,21 @@ export default function Header(){
         {user&&<Link className="header-action" title="Mensagens" to="/mensagens"><MessageCircle/><span>Mensagens</span></Link>}
         <Link className="header-action" title="Favoritos" to="/favoritos"><Heart/><span>Favoritos</span></Link>
         {user ? <>
-          <Link className="header-action header-profile-action" title="Meu painel" to="/painel">{user.avatar_url?<img className="header-avatar-img" src={imageUrl(user.avatar_url)} alt={user.name||'Perfil'}/>:<UserCircle/>}<span>Meu painel</span></Link>
+          <div className="header-profile-menu-wrap">
+            <button className={`header-action header-profile-action ${profileMenuOpen?'active':''}`} title="Minha conta" type="button" aria-expanded={profileMenuOpen} onClick={()=>setProfileMenuOpen(v=>!v)}>{user.avatar_url?<img className="header-avatar-img" src={imageUrl(user.avatar_url)} alt={user.name||'Perfil'}/>:<UserCircle/>}<span>Minha conta</span></button>
+            {profileMenuOpen&&<div className="header-profile-menu">
+              <div className="header-profile-menu-user">
+                {user.avatar_url?<img src={imageUrl(user.avatar_url)} alt={user.name||'Perfil'}/>:<UserCircle/>}
+                <div><b>{user.name||'Minha conta'}</b><small>{user.email||''}</small></div>
+              </div>
+              <Link to="/painel" onClick={()=>setProfileMenuOpen(false)}><UserCircle/>Meu painel</Link>
+              <Link to="/painel?tab=profile" onClick={()=>setProfileMenuOpen(false)}><ShieldCheck/>Perfil e segurança</Link>
+              {user.role==='admin'&&<Link to="/admin" onClick={()=>setProfileMenuOpen(false)}><ShieldCheck/>Painel Master</Link>}
+              <button type="button" className="header-profile-logout" onClick={()=>{setProfileMenuOpen(false);logout();nav('/')}}><LogOut/>Sair da conta</button>
+            </div>}
+          </div>
           <Link className="publish-premium" to="/escolher-plano"><Plus/> <span>Anunciar</span></Link>
           {user.role==='admin'&&<Link className="header-action admin-header-action" title="Administração" to="/admin"><ShieldCheck/><span>Master</span></Link>}
-          <button className="icon-btn logout-premium" title="Sair" onClick={()=>{logout();nav('/')}}><LogOut/></button>
         </> : <>
           <Link className="header-action login-premium" to="/entrar"><UserCircle/><span>Entrar</span></Link>
           <Link className="publish-premium" to="/entrar"><Plus/> <span>Anunciar</span></Link>
@@ -129,5 +146,11 @@ export default function Header(){
         {user&&<NavLink to="/meus-anuncios">Meus anúncios</NavLink>}
       </div>
     </div>
+
+    {!hideFloatingPublish&&<Link
+      className="mobile-floating-publish"
+      to={user?'/escolher-plano':'/entrar'}
+      aria-label="Criar novo anúncio"
+    ><Plus/><span>Novo anúncio</span></Link>}
   </header>
 }
