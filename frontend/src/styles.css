@@ -4977,3 +4977,69 @@ body{background:#f7f8fa}
   object-fit:cover!important;
   object-position:center center!important;
 }
+
+/* =========================================================
+   V2.16.6 — SLIDER RESPONSIVO SEM CORTE / SEM DISTORÇÃO
+   A imagem inteira fica sempre visível no notebook e no celular.
+   O fundo desfocado ocupa o espaço restante quando a proporção
+   da arte for diferente da proporção do bloco do slider.
+   ========================================================= */
+.home-header-slider .home-header-slide{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  background:#eef1f5!important;
+}
+.home-header-slider .home-header-slide-image{
+  position:absolute!important;
+  inset:0!important;
+  z-index:2!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:100%!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+  transform:none!important;
+  image-rendering:auto!important;
+}
+.home-header-slider .home-header-slide-bg{
+  display:block!important;
+  background-position:center center!important;
+  background-size:cover!important;
+  opacity:.62!important;
+}
+
+/* Notebook / desktop: bloco largo e proporcional. */
+@media (min-width:901px){
+  .home-header-slider{
+    height:auto!important;
+    aspect-ratio:16 / 5.2!important;
+    min-height:240px!important;
+    max-height:390px!important;
+  }
+}
+
+/* Tablet e celular: aumenta a altura útil para a arte caber inteira. */
+@media (max-width:900px){
+  .home-header-slider{
+    height:auto!important;
+    aspect-ratio:16 / 8.6!important;
+    min-height:178px!important;
+    max-height:330px!important;
+  }
+  .home-header-slider .home-header-slide-bg{
+    inset:-18px!important;
+    filter:blur(18px) saturate(.92)!important;
+    opacity:.58!important;
+  }
+}
+
+@media (max-width:520px){
+  .home-header-slider{
+    height:auto!important;
+    aspect-ratio:16 / 9!important;
+    min-height:190px!important;
+    max-height:none!important;
+  }
+}
