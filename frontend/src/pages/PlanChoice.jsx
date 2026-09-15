@@ -96,7 +96,7 @@ export default function PlanChoice(){
       <div>
         <span className="section-kicker">ANTES DE PUBLICAR</span>
         <h1>Escolha como seu anúncio será publicado</h1>
-        <p>Seu plano vale para a conta durante a validade e possui um limite de anúncios. O <b>Grátis libera 1 anúncio por conta por 7 dias</b>. Plus e Premium permitem várias publicações até o limite do plano, sem pagar novamente a cada anúncio.</p>
+        <p>Seu plano vale para a conta durante a validade e possui um limite de anúncios. O <b>Grátis libera 3 anúncios por conta por 7 dias</b>. Plus e Premium permitem várias publicações até o limite do plano, sem pagar novamente a cada anúncio.</p>
       </div>
       <div className="plan-choice-steps"><span><b>1</b> Use seu plano ativo ou escolha um</span><span><b>2</b> Pague somente ao contratar/renovar</span><span><b>3</b> Publique até o limite do plano</span></div>
     </div>

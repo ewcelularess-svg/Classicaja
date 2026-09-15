@@ -1,4 +1,4 @@
-# ClassificaJá V2.18.13
+# ClassificaJá V2.18.14
 
 Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.13 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
 
@@ -65,7 +65,7 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.13"`.
+A resposta deve indicar `"version":"2.18.14"`.
 
 ## Migração automática
 

@@ -175,7 +175,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.18.13")
+app = FastAPI(title="ClassificaJá API", version="2.18.14")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -1525,9 +1525,9 @@ PLANS = {
         "boost": 0,
         "free": True,
         "badge": "Grátis",
-        "tagline": "1 anúncio gratuito por conta, disponível por 7 dias.",
+        "tagline": "3 anúncios gratuitos por conta, disponíveis por 7 dias.",
         "features": [
-            "1 anúncio gratuito por conta",
+            "3 anúncios gratuitos por conta",
             "7 dias de publicação"
         ],
         "limitations": [
@@ -2312,7 +2312,7 @@ def products_to_dicts(db, rows, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.18.13", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.14", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
