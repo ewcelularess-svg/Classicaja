@@ -1,0 +1,5 @@
+CLASSIFICAJÁ V2.18.6 — RAILWAY
+
+Nenhuma variável nova é necessária.
+Mantenha as variáveis existentes da V2.18.x.
+Após o deploy, confirme /api/health com version 2.18.6.

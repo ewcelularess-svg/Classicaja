@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.5
+# ClassificaJá V2.18.6
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.5 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.6 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
 
 ## Stack
 
@@ -61,7 +61,7 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.5"`.
+A resposta deve indicar `"version":"2.18.6"`.
 
 ## Migração automática
 
@@ -83,3 +83,10 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - Na página de detalhes, o título é exibido por completo, inclusive no mobile.
 - Nos cards/listagens, o título pode ocupar até 3 linhas para preservar alinhamento e legibilidade.
 - Palavras extensas quebram de forma segura sem ultrapassar o card.
+
+
+## Home clean e carrossel — V2.18.6
+
+- Badges e contadores não ficam mais sobre as fotos dos cards.
+- Metadados aparecem em chips discretos abaixo da imagem.
+- A seção Ofertas em destaque usa carrossel automático com setas, indicadores e swipe no mobile.

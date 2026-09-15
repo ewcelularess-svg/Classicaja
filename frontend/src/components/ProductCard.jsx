@@ -41,13 +41,6 @@ export default function ProductCard({p}){
           ? <img src={imageUrl(mainImage)} alt={p.title} loading="lazy"/>
           : <div className="placeholder"><ImageOff/><span>Sem foto</span></div>}
 
-        <div className="card-badges card-badges-clean">
-          {p.featured_active&&<span className="badge featured-badge"><Star size={12} fill="currentColor"/> Destaque</span>}
-          {promoActive&&<span className="badge promo-badge"><Tag size={12}/> Promoção</span>}
-          {isRecent&&<span className="badge recent-badge"><Clock3 size={12}/> Recente</span>}
-          {showCondition&&<span className="condition-badge">{p.condition}</span>}
-          {p.images && p.images.length > 1 && <span className="badge gallery-count">+{p.images.length} fotos</span>}
-        </div>
       </div>
 
       <div className="product-body">
@@ -56,6 +49,13 @@ export default function ProductCard({p}){
           <div className="price price-strong">{money(p.price)}</div>
         </div>
         <div className="title">{p.title}</div>
+        {(p.featured_active || promoActive || isRecent || showCondition || (p.images && p.images.length > 1)) && <div className="card-info-chips">
+          {p.featured_active&&<span className="card-info-chip featured"><Star size={11} fill="currentColor"/> Destaque</span>}
+          {promoActive&&<span className="card-info-chip promo"><Tag size={11}/> Promoção</span>}
+          {isRecent&&<span className="card-info-chip recent"><Clock3 size={11}/> Recente</span>}
+          {showCondition&&<span className="card-info-chip condition">{p.condition}</span>}
+          {p.images && p.images.length > 1 && <span className="card-info-chip photos">{p.images.length} fotos</span>}
+        </div>}
         <div className="clean-meta-stack">
           <div className="meta clean-meta"><MapPin size={14}/><span>{compactLocation || `${p.city||''}${p.state?` - ${p.state}`:''}`}</span></div>
           {p.seller?.verified

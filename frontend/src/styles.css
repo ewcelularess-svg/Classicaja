@@ -5532,3 +5532,296 @@ body{background:#f7f8fa}
     line-height:1.22!important;
   }
 }
+
+
+/* =========================================================
+   V2.18.6 — CARDS LIMPOS + CARROSSEL DE OFERTAS EM DESTAQUE
+   Fotos livres de badges; informações ficam abaixo da imagem.
+   ========================================================= */
+.product-card-clean .product-image .card-badges,
+.product-card-clean .product-image .card-badges-clean{
+  display:none!important;
+}
+.product-card-clean .product-image{
+  overflow:hidden!important;
+}
+.product-card-clean .card-info-chips{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  flex-wrap:wrap;
+  margin:0 0 8px;
+  min-height:0;
+}
+.product-card-clean .card-info-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  min-height:22px;
+  padding:4px 7px;
+  border-radius:999px;
+  background:#f4f6f8;
+  color:#64748b;
+  font-size:9px;
+  line-height:1;
+  font-weight:800;
+  white-space:nowrap;
+}
+.product-card-clean .card-info-chip svg{width:11px;height:11px;flex:0 0 auto}
+.product-card-clean .card-info-chip.featured{background:#fff7df;color:#9a6700}
+.product-card-clean .card-info-chip.promo{background:#fff0f4;color:#d91d4f}
+.product-card-clean .card-info-chip.recent{background:#f1f5f9;color:#475569}
+.product-card-clean .card-info-chip.condition{background:#eef6ff;color:#2563eb}
+.product-card-clean .card-info-chip.photos{background:#f8fafc;color:#64748b}
+
+/* Carrossel principal de ofertas em destaque */
+.featured-carousel-section{
+  overflow:hidden;
+}
+.featured-product-carousel{
+  position:relative;
+  max-width:1180px;
+  margin:0 auto;
+  border:1px solid #e9edf2;
+  border-radius:24px;
+  background:#fff;
+  box-shadow:0 10px 30px rgba(15,23,42,.055);
+  overflow:hidden;
+  touch-action:pan-y;
+}
+.featured-carousel-slide{
+  display:grid;
+  grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);
+  min-height:390px;
+  color:inherit;
+  animation:featuredSlideIn .34s ease both;
+}
+@keyframes featuredSlideIn{
+  from{opacity:.35;transform:translateX(12px)}
+  to{opacity:1;transform:translateX(0)}
+}
+.featured-carousel-image{
+  min-width:0;
+  min-height:390px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(135deg,#f3f5f7,#fff);
+  overflow:hidden;
+}
+.featured-carousel-image img{
+  width:100%;
+  height:100%;
+  min-height:390px;
+  object-fit:contain;
+  display:block;
+}
+.featured-carousel-placeholder{
+  font-size:80px;
+  opacity:.55;
+}
+.featured-carousel-copy{
+  min-width:0;
+  padding:42px 42px 52px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:flex-start;
+  background:linear-gradient(145deg,#fff,#fff9fa);
+}
+.featured-carousel-label{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-bottom:12px;
+  color:#9a6700;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+}
+.featured-carousel-copy h3{
+  margin:0;
+  max-width:100%;
+  font-size:clamp(25px,2.3vw,36px);
+  line-height:1.12;
+  letter-spacing:-.035em;
+  color:#111827;
+  overflow-wrap:anywhere;
+}
+.featured-carousel-copy>strong{
+  margin-top:18px;
+  color:#e11d48;
+  font-size:34px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:-.035em;
+}
+.featured-carousel-location{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-top:15px;
+  color:#64748b;
+  font-size:12px;
+}
+.featured-carousel-location svg{width:16px;height:16px;flex:0 0 auto}
+.featured-carousel-cta{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  margin-top:22px;
+  min-height:42px;
+  padding:0 14px;
+  border-radius:12px;
+  background:#e11d48;
+  color:#fff;
+  font-size:12px;
+  font-weight:850;
+}
+.featured-carousel-arrow{
+  position:absolute;
+  top:50%;
+  transform:translateY(-50%);
+  z-index:3;
+  width:46px;
+  height:46px;
+  border:1px solid rgba(15,23,42,.08);
+  border-radius:50%;
+  background:rgba(255,255,255,.94);
+  color:#1f2937;
+  box-shadow:0 8px 22px rgba(15,23,42,.13);
+  display:grid;
+  place-items:center;
+}
+.featured-carousel-arrow svg{width:23px;height:23px}
+.featured-carousel-arrow.prev{left:14px}
+.featured-carousel-arrow.next{right:14px}
+.featured-carousel-dots{
+  position:absolute;
+  left:50%;
+  bottom:16px;
+  transform:translateX(-50%);
+  z-index:4;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 8px;
+  border-radius:999px;
+  background:rgba(255,255,255,.88);
+  backdrop-filter:blur(8px);
+}
+.featured-carousel-dots button{
+  width:7px;
+  height:7px;
+  padding:0;
+  border:0;
+  border-radius:999px;
+  background:#cbd5e1;
+  transition:.2s ease;
+}
+.featured-carousel-dots button.active{
+  width:22px;
+  background:#e11d48;
+}
+
+@media (max-width:900px){
+  .featured-carousel-section{
+    padding:15px 10px 17px!important;
+  }
+  .featured-carousel-head{
+    margin-bottom:10px!important;
+  }
+  .featured-product-carousel{
+    border-radius:16px;
+    border-color:#edf0f4;
+    box-shadow:0 5px 18px rgba(15,23,42,.06);
+  }
+  .featured-carousel-slide{
+    display:block;
+    min-height:0;
+  }
+  .featured-carousel-image{
+    width:100%;
+    min-height:0;
+    height:auto;
+    aspect-ratio:16/10;
+    background:#f3f4f6;
+  }
+  .featured-carousel-image img{
+    min-height:0;
+    width:100%;
+    height:100%;
+    object-fit:contain;
+    background:#fff;
+  }
+  .featured-carousel-copy{
+    min-height:142px;
+    padding:13px 14px 34px;
+    background:#fff;
+  }
+  .featured-carousel-label{
+    margin-bottom:6px;
+    font-size:8px;
+  }
+  .featured-carousel-label svg{width:12px;height:12px}
+  .featured-carousel-copy h3{
+    font-size:17px;
+    line-height:1.2;
+    display:-webkit-box;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+    line-clamp:2;
+    overflow:hidden;
+  }
+  .featured-carousel-copy>strong{
+    margin-top:8px;
+    font-size:24px;
+  }
+  .featured-carousel-location{
+    margin-top:8px;
+    max-width:100%;
+    font-size:10px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .featured-carousel-cta{display:none}
+  .featured-carousel-arrow{
+    top:31%;
+    width:36px;
+    height:36px;
+    background:rgba(255,255,255,.93);
+  }
+  .featured-carousel-arrow svg{width:19px;height:19px}
+  .featured-carousel-arrow.prev{left:8px}
+  .featured-carousel-arrow.next{right:8px}
+  .featured-carousel-dots{
+    bottom:9px;
+    padding:5px 7px;
+  }
+  .featured-carousel-dots button{width:6px;height:6px}
+  .featured-carousel-dots button.active{width:18px}
+
+  /* Chips saem da foto e ficam discretos no corpo do card. */
+  .clean-product-grid .product-card-clean .card-info-chips,
+  .clean-horizontal-cards .product-card-clean .card-info-chips{
+    gap:3px!important;
+    margin:0 0 6px!important;
+  }
+  .clean-product-grid .product-card-clean .card-info-chip,
+  .clean-horizontal-cards .product-card-clean .card-info-chip{
+    min-height:18px!important;
+    padding:3px 5px!important;
+    font-size:7px!important;
+  }
+  .clean-product-grid .product-card-clean .card-info-chip svg,
+  .clean-horizontal-cards .product-card-clean .card-info-chip svg{
+    width:9px!important;
+    height:9px!important;
+  }
+  /* Menos ruído no mobile: mantém os sinais úteis e oculta metadados redundantes. */
+  .clean-product-grid .product-card-clean .card-info-chip.recent,
+  .clean-product-grid .product-card-clean .card-info-chip.condition{
+    display:none!important;
+  }
+}

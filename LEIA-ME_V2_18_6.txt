@@ -1,0 +1,12 @@
+CLASSIFICAJÁ V2.18.6 — HOME MAIS CLEAN + CARROSSEL DE DESTAQUES
+
+Principais mudanças:
+- Fotos dos anúncios sem badges/textos sobrepostos.
+- Informações movidas para baixo da foto.
+- Ofertas em destaque agora aparecem em carrossel automático.
+- Setas, indicadores e gesto de arrastar no mobile.
+- Mantidas todas as regras e funcionalidades anteriores.
+
+Após o deploy:
+https://www.classificaja.com.br/api/health
+Esperado: "version":"2.18.6"

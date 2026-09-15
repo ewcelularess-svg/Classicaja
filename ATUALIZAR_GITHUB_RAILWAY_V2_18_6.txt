@@ -1,0 +1,9 @@
+CLASSIFICAJÁ V2.18.6 — GITHUB + RAILWAY
+
+1. Extraia o ZIP de arquivos alterados.
+2. Envie os arquivos/pastas extraídos para a raiz do repositório, substituindo os atuais.
+3. Não envie o ZIP fechado como arquivo do projeto.
+4. Faça commit na branch main.
+5. O Railway fará o deploy automático.
+6. Confirme https://www.classificaja.com.br/api/health
+7. Esperado: "version":"2.18.6"

@@ -1,9 +1,11 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {ChevronRight, Sparkles} from 'lucide-react';
+import {ChevronLeft, ChevronRight, MapPin, Sparkles, Star} from 'lucide-react';
 import {Link, useSearchParams} from 'react-router-dom';
-import {api} from '../lib/api';
+import {api, imageUrl} from '../lib/api';
 import ProductCard from '../components/ProductCard';
 import PartnerAdSpot from '../components/PartnerAdSpot';
+
+const money=v=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 
 export default function Home(){
  const [searchParams,setSearchParams]=useSearchParams();
@@ -20,6 +22,9 @@ export default function Home(){
  const [hasMore,setHasMore]=useState(true);
  const [loadingProducts,setLoadingProducts]=useState(false);
  const feedEndRef=useRef(null);
+ const featuredTouchStart=useRef(null);
+ const [featuredIndex,setFeaturedIndex]=useState(0);
+ const [featuredPaused,setFeaturedPaused]=useState(false);
  const PAGE_SIZE=12;
 
  const productsUrl=(start=0)=>`/api/products?search=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&city=${encodeURIComponent(city)}&neighborhood=${encodeURIComponent(neighborhood)}&sort=${sort}&limit=${PAGE_SIZE}&offset=${start}`;
@@ -89,15 +94,60 @@ export default function Home(){
  const firstFeed=useMemo(()=>products.slice(0,8),[products]);
  const restFeed=useMemo(()=>products.slice(8),[products]);
 
+ useEffect(()=>{
+   if(!featured.length){ setFeaturedIndex(0); return; }
+   setFeaturedIndex(i=>Math.min(i,featured.length-1));
+ },[featured.length]);
+
+ useEffect(()=>{
+   if(featured.length<=1||featuredPaused) return;
+   const timer=setInterval(()=>setFeaturedIndex(i=>(i+1)%featured.length),4500);
+   return()=>clearInterval(timer);
+ },[featured.length,featuredPaused]);
+
+ const featuredPrev=()=>setFeaturedIndex(i=>(i-1+Math.max(featured.length,1))%Math.max(featured.length,1));
+ const featuredNext=()=>setFeaturedIndex(i=>(i+1)%Math.max(featured.length,1));
+ const featuredTouchEnd=e=>{
+   const start=featuredTouchStart.current;
+   featuredTouchStart.current=null;
+   if(start==null) return;
+   const end=e.changedTouches?.[0]?.clientX;
+   if(end==null||Math.abs(end-start)<45) return;
+   if(end<start) featuredNext(); else featuredPrev();
+ };
+ const activeFeatured=featured[featuredIndex];
+
  return <>
   <section className="section category-section clean-category-section" id="categorias">
     <div className="section-head compact-section-head"><div><span className="section-kicker">EXPLORE</span><h2>Categorias</h2></div><button className="text-btn" onClick={()=>chooseCategory('')}>Ver todas <ChevronRight/></button></div>
     <div className="category-grid premium-category-grid clean-category-grid">{categories.map(c=><button key={c.slug} className={`category-card ${cat===c.slug?'active':''}`} onClick={()=>chooseCategory(c.slug)}><span>{c.icon}</span><b>{c.name}</b></button>)}</div>
   </section>
 
-  {featured.length>0 && <section className="section featured-showcase-section">
-    <div className="section-head compact-section-head"><div><span className="section-kicker">EM DESTAQUE</span><h2>Ofertas em destaque</h2></div><a className="text-btn" href="#produtos">Ver todas <ChevronRight/></a></div>
-    <div className="horizontal-cards clean-horizontal-cards">{featured.map(p=><ProductCard key={p.id} p={p}/>)}</div>
+  {featured.length>0 && activeFeatured && <section className="section featured-showcase-section featured-carousel-section">
+    <div className="section-head compact-section-head featured-carousel-head"><div><span className="section-kicker">EM DESTAQUE</span><h2>Ofertas em destaque</h2></div><a className="text-btn" href="#produtos">Ver todas <ChevronRight/></a></div>
+
+    <div className="featured-product-carousel" onMouseEnter={()=>setFeaturedPaused(true)} onMouseLeave={()=>setFeaturedPaused(false)} onTouchStart={e=>{featuredTouchStart.current=e.touches?.[0]?.clientX??null;setFeaturedPaused(true)}} onTouchEnd={e=>{featuredTouchEnd(e);setFeaturedPaused(false)}}>
+      <Link key={activeFeatured.id} className="featured-carousel-slide" to={`/produto/${activeFeatured.id}`} aria-label={`Ver anúncio ${activeFeatured.title}`}>
+        <div className="featured-carousel-image">
+          {((activeFeatured.images&&activeFeatured.images[0])||activeFeatured.image_url)
+            ? <img src={imageUrl((activeFeatured.images&&activeFeatured.images[0])||activeFeatured.image_url)} alt={activeFeatured.title}/>
+            : <div className="featured-carousel-placeholder">📦</div>}
+        </div>
+        <div className="featured-carousel-copy">
+          <div className="featured-carousel-label"><Star size={15} fill="currentColor"/> Oferta em destaque</div>
+          <h3>{activeFeatured.title}</h3>
+          <strong>{money(activeFeatured.price)}</strong>
+          <span className="featured-carousel-location"><MapPin size={15}/>{[activeFeatured.neighborhood,activeFeatured.city,activeFeatured.state].filter(Boolean).join(' • ')}</span>
+          <span className="featured-carousel-cta">Ver anúncio <ChevronRight size={16}/></span>
+        </div>
+      </Link>
+
+      {featured.length>1&&<>
+        <button type="button" className="featured-carousel-arrow prev" onClick={e=>{e.preventDefault();featuredPrev()}} aria-label="Oferta anterior"><ChevronLeft/></button>
+        <button type="button" className="featured-carousel-arrow next" onClick={e=>{e.preventDefault();featuredNext()}} aria-label="Próxima oferta"><ChevronRight/></button>
+        <div className="featured-carousel-dots" aria-label="Navegação das ofertas">{featured.map((p,i)=><button key={p.id} type="button" className={i===featuredIndex?'active':''} onClick={()=>setFeaturedIndex(i)} aria-label={`Ir para oferta ${i+1}`}/>)}</div>
+      </>}
+    </div>
   </section>}
 
   <section className="section infinite-feed-section clean-feed-section" id="produtos">
