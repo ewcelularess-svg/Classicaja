@@ -3,10 +3,17 @@ from __future__ import annotations
 import base64
 import json
 import hashlib
+import hmac
+import io
 import os
 import secrets
+import smtplib
 import sqlite3
+import threading
+import time
 import uuid
+from collections import defaultdict, deque
+from email.message import EmailMessage
 from urllib.parse import quote, unquote, urlparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,9 +22,10 @@ from typing import Optional
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from cryptography.fernet import Fernet, InvalidToken
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -29,15 +37,29 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 USE_POSTGRES = DATABASE_URL.startswith(("postgresql://", "postgres://"))
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_SECRET_KEY = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SECRET_KEY") or "").strip()
+SUPABASE_SECRET_KEY = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "product-images").strip() or "product-images"
 USE_SUPABASE_STORAGE = bool(SUPABASE_URL and SUPABASE_SECRET_KEY)
 SEED_DEMO_DATA = os.getenv("SEED_DEMO_DATA", "false" if USE_POSTGRES else "true").lower() in {"1", "true", "yes", "sim"}
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
+# V2.18: payment credentials use a dedicated key. Never derive this key from
+# unrelated production secrets, because rotating an admin password or Supabase key
+# must not make encrypted payment credentials unreadable.
 PAYMENT_CONFIG_SECRET = (os.getenv("PAYMENT_CONFIG_KEY") or "").strip()
-if not PAYMENT_CONFIG_SECRET:
-    PAYMENT_CONFIG_SECRET = "|".join(x for x in [SUPABASE_SECRET_KEY, os.getenv("ADMIN_PASSWORD", "").strip()] if x)
+LEGACY_PAYMENT_CONFIG_SECRET = "|".join(x for x in [SUPABASE_SECRET_KEY, os.getenv("ADMIN_PASSWORD", "").strip()] if x)
+
+ACCOUNT_TOKEN_SECRET = (os.getenv("ACCOUNT_TOKEN_SECRET") or PAYMENT_CONFIG_SECRET or SUPABASE_SECRET_KEY or os.getenv("ADMIN_PASSWORD", "")).strip()
+FRONTEND_URL = (os.getenv("FRONTEND_URL") or PUBLIC_BASE_URL or "http://localhost:5173").strip().rstrip("/")
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587") or "587")
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "sim"}
+REQUIRE_EMAIL_VERIFICATION_FOR_FREE = os.getenv("REQUIRE_EMAIL_VERIFICATION_FOR_FREE", "true" if USE_POSTGRES else "false").lower() in {"1", "true", "yes", "sim"}
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in {"1", "true", "yes", "sim"}
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "true" if USE_POSTGRES else "false").lower() in {"1", "true", "yes", "sim"}
 
 PAYMENT_PROVIDER_DEFS = {
     "mercadopago": {
@@ -115,13 +137,22 @@ def encrypt_payment_credentials(data: dict) -> str:
 def decrypt_payment_credentials(token: str | None) -> dict:
     if not token:
         return {}
-    f = payment_fernet()
-    if not f:
-        return {}
-    try:
-        return json.loads(f.decrypt(token.encode("utf-8")).decode("utf-8"))
-    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
-        return {}
+    # Migration compatibility: V2.17.x could derive the encryption key from
+    # Supabase/Admin secrets. V2.18 writes only with PAYMENT_CONFIG_KEY, but can
+    # still read legacy ciphertext so an existing PagBank setup is not lost.
+    candidates = []
+    if PAYMENT_CONFIG_SECRET:
+        candidates.append(PAYMENT_CONFIG_SECRET)
+    if LEGACY_PAYMENT_CONFIG_SECRET and LEGACY_PAYMENT_CONFIG_SECRET not in candidates:
+        candidates.append(LEGACY_PAYMENT_CONFIG_SECRET)
+    for secret in candidates:
+        raw = hashlib.sha256(secret.encode("utf-8")).digest()
+        f = Fernet(base64.urlsafe_b64encode(raw))
+        try:
+            return json.loads(f.decrypt(token.encode("utf-8")).decode("utf-8"))
+        except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    return {}
 
 
 try:
@@ -136,7 +167,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.16.7")
+app = FastAPI(title="ClassificaJá API", version="2.18.0")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -146,6 +177,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+# Lightweight in-process abuse protection. It intentionally covers only expensive
+# or security-sensitive endpoints, so normal catalog browsing remains unaffected.
+_rate_buckets = defaultdict(deque)
+_rate_lock = threading.Lock()
+_RATE_RULES = [
+    ("POST", "/api/auth/login", 10, 60),
+    ("POST", "/api/auth/register", 5, 600),
+    ("POST", "/api/auth/social", 15, 60),
+    ("POST", "/api/auth/forgot-password", 5, 900),
+    ("POST", "/api/auth/resend-verification", 5, 900),
+    ("POST", "/api/payments", 10, 60),
+    ("POST_PREFIX", "/api/products/", 80, 60),
+    ("GET_PREFIX", "/api/products/", 180, 60),
+    ("POST_PREFIX", "/api/conversations/", 60, 60),
+]
+
+def _request_ip(request: Request) -> str:
+    if TRUST_PROXY_HEADERS:
+        forwarded = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+        if forwarded:
+            return forwarded[:80]
+    return (request.client.host if request.client else "unknown")[:80]
+
+def _rate_rule(method: str, path: str):
+    for kind, target, limit, window in _RATE_RULES:
+        if kind == method and path == target:
+            return limit, window, target
+        if kind == f"{method}_PREFIX" and path.startswith(target):
+            return limit, window, target
+    return None
+
+@app.middleware("http")
+async def security_rate_limit(request: Request, call_next):
+    if RATE_LIMIT_ENABLED:
+        rule = _rate_rule(request.method.upper(), request.url.path)
+        if rule:
+            limit, window, group = rule
+            now = time.monotonic()
+            key = (request.method.upper(), group, _request_ip(request))
+            with _rate_lock:
+                bucket = _rate_buckets[key]
+                while bucket and bucket[0] <= now - window:
+                    bucket.popleft()
+                if len(bucket) >= limit:
+                    retry = max(1, int(window - (now - bucket[0])))
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Muitas tentativas. Aguarde um pouco e tente novamente."},
+                        headers={"Retry-After": str(retry)},
+                    )
+                bucket.append(now)
+                # Prevent unbounded growth from one-off IP/path combinations.
+                if len(_rate_buckets) > 10000:
+                    stale = [k for k, v in list(_rate_buckets.items())[:2000] if not v or v[-1] <= now - 3600]
+                    for k in stale:
+                        _rate_buckets.pop(k, None)
+    return await call_next(request)
 
 
 def _pg_sql(sql: str):
@@ -248,6 +338,80 @@ def verify_password(password: str, salt_b64: str, digest_b64: str):
         return False
 
 
+def session_token_key(token: str) -> str:
+    """Store new session tokens only as SHA-256 digests; legacy plaintext tokens remain valid."""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+def _token_candidates(token: str):
+    return (token, session_token_key(token))
+
+def _account_token(user_id: str, purpose: str, version: str = "", minutes: int = 60) -> str:
+    if not ACCOUNT_TOKEN_SECRET:
+        raise HTTPException(503, "Configure ACCOUNT_TOKEN_SECRET para habilitar links de segurança por e-mail")
+    payload = {
+        "uid": user_id, "purpose": purpose, "version": version,
+        "exp": int(time.time()) + max(5, minutes) * 60, "nonce": secrets.token_hex(8),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    body = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    sig = hmac.new(ACCOUNT_TOKEN_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+def _read_account_token(token: str, purpose: str) -> dict:
+    try:
+        body, signature = str(token or "").rsplit(".", 1)
+        expected = hmac.new(ACCOUNT_TOKEN_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+        if not ACCOUNT_TOKEN_SECRET or not secrets.compare_digest(signature, expected):
+            raise ValueError
+        raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+        payload = json.loads(raw.decode("utf-8"))
+        if payload.get("purpose") != purpose or int(payload.get("exp") or 0) < int(time.time()):
+            raise ValueError
+        return payload
+    except Exception:
+        raise HTTPException(400, "Link inválido ou expirado")
+
+def _send_email(to_email: str, subject: str, text: str) -> bool:
+    if not (SMTP_HOST and SMTP_FROM and to_email):
+        return False
+    msg = EmailMessage()
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(text)
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+            if SMTP_USE_TLS:
+                smtp.starttls()
+            if SMTP_USER:
+                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True
+    except Exception as exc:
+        print(f"[email] Falha no envio para {to_email}: {exc}")
+        return False
+
+def _send_verification_email(row) -> bool:
+    version = hashlib.sha256((str(_row_value(row, "email", "")) + str(_row_value(row, "created_at", ""))).encode()).hexdigest()[:16]
+    token = _account_token(row["id"], "verify-email", version, minutes=24 * 60)
+    base = PUBLIC_BASE_URL or "http://localhost:8000"
+    link = f"{base}/api/auth/verify-email?token={quote(token)}"
+    return _send_email(
+        row["email"],
+        "Confirme seu e-mail no ClassificaJá",
+        f"Olá, {_row_value(row, 'name', 'usuário')}!\n\nConfirme seu e-mail para liberar todos os recursos da sua conta:\n{link}\n\nO link expira em 24 horas.",
+    )
+
+def _send_password_reset_email(row) -> bool:
+    version = hashlib.sha256(str(_row_value(row, "password_hash", "")).encode()).hexdigest()[:16]
+    token = _account_token(row["id"], "reset-password", version, minutes=30)
+    link = f"{FRONTEND_URL}/entrar?reset_token={quote(token)}"
+    return _send_email(
+        row["email"],
+        "Redefinição de senha do ClassificaJá",
+        f"Recebemos uma solicitação para redefinir sua senha.\n\nUse este link em até 30 minutos:\n{link}\n\nSe não foi você, ignore esta mensagem.",
+    )
+
 def table_columns(db, table: str):
     if USE_POSTGRES:
         rows = db.execute(
@@ -290,109 +454,76 @@ def ensure_supabase_bucket():
         print(f"[storage] Não foi possível validar/criar o bucket automaticamente: {exc}")
 
 
-async def save_product_image(image: UploadFile):
-    ext = Path(image.filename or "image.jpg").suffix.lower() or ".jpg"
-    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
-        raise HTTPException(400, "Formato de imagem não suportado")
+def _normalized_image(content: bytes, max_bytes: int) -> tuple[bytes, str, str]:
+    if not content:
+        raise HTTPException(400, "Imagem vazia")
+    if len(content) > max_bytes:
+        raise HTTPException(400, f"Imagem maior que {max_bytes // (1024 * 1024)} MB")
+    try:
+        Image.MAX_IMAGE_PIXELS = 40_000_000
+        with Image.open(io.BytesIO(content)) as probe:
+            fmt = (probe.format or "").upper()
+            if fmt not in {"JPEG", "PNG", "WEBP"}:
+                raise HTTPException(400, "O arquivo enviado não é uma imagem JPG, PNG ou WEBP válida")
+            probe.verify()
+        with Image.open(io.BytesIO(content)) as original:
+            width, height = original.size
+            if width < 1 or height < 1 or width * height > 40_000_000:
+                raise HTTPException(400, "Dimensões da imagem não suportadas")
+            image = ImageOps.exif_transpose(original)
+            fmt = (original.format or fmt).upper()
+            output = io.BytesIO()
+            if fmt == "JPEG":
+                if image.mode not in {"RGB", "L"}:
+                    image = image.convert("RGB")
+                image.save(output, "JPEG", quality=90, optimize=True)
+                return output.getvalue(), ".jpg", "image/jpeg"
+            if fmt == "PNG":
+                if image.mode not in {"RGB", "RGBA", "L", "LA", "P"}:
+                    image = image.convert("RGBA")
+                image.save(output, "PNG", optimize=True)
+                return output.getvalue(), ".png", "image/png"
+            if image.mode not in {"RGB", "RGBA", "L", "LA"}:
+                image = image.convert("RGBA")
+            image.save(output, "WEBP", quality=90, method=4)
+            return output.getvalue(), ".webp", "image/webp"
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        raise HTTPException(400, "O arquivo enviado não é uma imagem válida")
+
+async def _save_image(image: UploadFile, folder: str, local_prefix: str, max_mb: int):
     content = await image.read()
-    if len(content) > 7 * 1024 * 1024:
-        raise HTTPException(400, "Imagem maior que 7 MB")
-    filename = f"products/{uuid.uuid4().hex}{ext}"
+    safe_content, ext, mime = _normalized_image(content, max_mb * 1024 * 1024)
+    filename = f"{folder}/{uuid.uuid4().hex}{ext}"
     if USE_SUPABASE_STORAGE:
         import httpx
         headers = {
             "apikey": SUPABASE_SECRET_KEY,
             "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-            "Content-Type": image.content_type or "image/jpeg",
+            "Content-Type": mime,
             "x-upsert": "false",
         }
         url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
-        response = httpx.post(url, headers=headers, content=content, timeout=30)
+        response = httpx.post(url, headers=headers, content=safe_content, timeout=30)
         if response.status_code >= 300:
             raise HTTPException(502, f"Falha ao enviar imagem ao Supabase Storage: {response.text[:180]}")
         return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
-    local_name = Path(filename).name
-    (UPLOAD_DIR / local_name).write_bytes(content)
+    local_name = f"{local_prefix}{uuid.uuid4().hex}{ext}"
+    (UPLOAD_DIR / local_name).write_bytes(safe_content)
     return f"/uploads/{local_name}"
 
+async def save_product_image(image: UploadFile):
+    return await _save_image(image, "products", "product_", 7)
 
 async def save_partner_image(image: UploadFile):
-    ext = Path(image.filename or "partner.jpg").suffix.lower() or ".jpg"
-    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
-        raise HTTPException(400, "Formato de imagem não suportado. Use JPG, PNG ou WEBP")
-    content = await image.read()
-    if len(content) > 7 * 1024 * 1024:
-        raise HTTPException(400, "Imagem maior que 7 MB")
-    filename = f"partners/{uuid.uuid4().hex}{ext}"
-    if USE_SUPABASE_STORAGE:
-        import httpx
-        headers = {
-            "apikey": SUPABASE_SECRET_KEY,
-            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-            "Content-Type": image.content_type or "image/jpeg",
-            "x-upsert": "false",
-        }
-        url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
-        response = httpx.post(url, headers=headers, content=content, timeout=30)
-        if response.status_code >= 300:
-            raise HTTPException(502, f"Falha ao enviar imagem da parceria: {response.text[:180]}")
-        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
-    local_name = f"partner_{uuid.uuid4().hex}{ext}"
-    (UPLOAD_DIR / local_name).write_bytes(content)
-    return f"/uploads/{local_name}"
-
+    return await _save_image(image, "partners", "partner_", 7)
 
 async def save_home_slide_image(image: UploadFile):
-    ext = Path(image.filename or "home-slide.jpg").suffix.lower() or ".jpg"
-    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
-        raise HTTPException(400, "Formato de imagem não suportado. Use JPG, PNG ou WEBP")
-    content = await image.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(400, "Imagem maior que 10 MB")
-    filename = f"home-slides/{uuid.uuid4().hex}{ext}"
-    if USE_SUPABASE_STORAGE:
-        import httpx
-        headers = {
-            "apikey": SUPABASE_SECRET_KEY,
-            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-            "Content-Type": image.content_type or "image/jpeg",
-            "x-upsert": "false",
-        }
-        url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
-        response = httpx.post(url, headers=headers, content=content, timeout=30)
-        if response.status_code >= 300:
-            raise HTTPException(502, f"Falha ao enviar imagem do slider: {response.text[:180]}")
-        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
-    local_name = f"home_slide_{uuid.uuid4().hex}{ext}"
-    (UPLOAD_DIR / local_name).write_bytes(content)
-    return f"/uploads/{local_name}"
-
-
+    return await _save_image(image, "home-slides", "home_slide_", 10)
 
 async def save_profile_image(image: UploadFile):
-    ext = Path(image.filename or "profile.jpg").suffix.lower() or ".jpg"
-    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
-        raise HTTPException(400, "Formato de imagem não suportado. Use JPG, PNG ou WEBP")
-    content = await image.read()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(400, "Foto maior que 5 MB")
-    filename = f"profiles/{uuid.uuid4().hex}{ext}"
-    if USE_SUPABASE_STORAGE:
-        import httpx
-        headers = {
-            "apikey": SUPABASE_SECRET_KEY,
-            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
-            "Content-Type": image.content_type or "image/jpeg",
-            "x-upsert": "false",
-        }
-        url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
-        response = httpx.post(url, headers=headers, content=content, timeout=30)
-        if response.status_code >= 300:
-            raise HTTPException(502, f"Falha ao enviar foto do perfil: {response.text[:180]}")
-        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
-    local_name = f"profile_{uuid.uuid4().hex}{ext}"
-    (UPLOAD_DIR / local_name).write_bytes(content)
-    return f"/uploads/{local_name}"
+    return await _save_image(image, "profiles", "profile_", 5)
 
 def delete_product_image(image_url: str | None):
     if not image_url:
@@ -596,6 +727,15 @@ def init_db():
         ensure_column(db, "users", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
         ensure_column(db, "sessions", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
         ensure_column(db, "sessions", "authenticated_at", "TEXT")
+        # V2.18 migrates legacy plaintext bearer tokens in-place to SHA-256.
+        # Clients keep the original bearer token; authentication hashes it before lookup.
+        legacy_sessions = db.execute("SELECT token FROM sessions").fetchall()
+        for session_row in legacy_sessions:
+            stored = str(session_row["token"] or "")
+            is_sha256 = len(stored) == 64 and all(ch in "0123456789abcdef" for ch in stored.lower())
+            if stored and not is_sha256:
+                db.execute("UPDATE sessions SET token=? WHERE token=?", (session_token_key(stored), stored))
+        db.execute("DELETE FROM sessions WHERE expires_at<=?", (now_iso(),))
         db.execute("UPDATE users SET profile_review_status='verified' WHERE verified=1 AND profile_review_status='unverified'")
         db.execute("UPDATE users SET email_verified=1 WHERE LOWER(email)=?", (MASTER_EMAIL,)) if MASTER_EMAIL else None
         db.execute("UPDATE sessions SET authenticated_at=? WHERE authenticated_at IS NULL OR authenticated_at=''", (now_iso(),))
@@ -710,6 +850,38 @@ def init_db():
             product_id TEXT,
             used_at TEXT NOT NULL
         )""")
+        # V2.18 — independent publishing entitlements prevent a second paid plan
+        # from overwriting a plan that the customer already purchased.
+        db.execute("""CREATE TABLE IF NOT EXISTS publish_entitlements (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            plan_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            payment_order_id TEXT,
+            product_id TEXT,
+            source_key TEXT UNIQUE,
+            selected_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        legacy_access_rows = db.execute("SELECT * FROM publish_plan_access").fetchall()
+        for legacy_access in legacy_access_rows:
+            legacy_data = dict(legacy_access)
+            source_key = f"legacy:{legacy_data['user_id']}"
+            db.execute(
+                """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,selected_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_key) DO NOTHING""",
+                (str(uuid.uuid4()), legacy_data["user_id"], legacy_data["plan_code"], legacy_data.get("status") or "ready",
+                 legacy_data.get("payment_order_id"), legacy_data.get("product_id"), source_key,
+                 legacy_data.get("selected_at") or now_iso(), legacy_data.get("updated_at") or now_iso()),
+            )
+        db.execute("""CREATE TABLE IF NOT EXISTS product_view_events (
+            product_id TEXT NOT NULL,
+            viewer_key TEXT NOT NULL,
+            view_bucket TEXT NOT NULL,
+            viewed_at TEXT NOT NULL,
+            PRIMARY KEY(product_id, viewer_key, view_bucket),
+            FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+        )""")
         for provider in PAYMENT_PROVIDER_DEFS:
             db.execute(
                 "INSERT OR IGNORE INTO payment_integrations(provider,enabled,is_default,mode,credentials_enc,updated_at) VALUES (?,?,?,?,?,?)",
@@ -727,6 +899,25 @@ def init_db():
         ensure_column(db, "payment_orders", "provider_payload", "TEXT")
         ensure_column(db, "notifications", "target_user_id", "TEXT")
         ensure_column(db, "notifications", "conversation_id", "TEXT")
+
+        # V2.18 — indexes for the catalog, chat, moderation and payments.
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_products_status_created ON products(status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_products_category_status ON products(category_slug, status)",
+            "CREATE INDEX IF NOT EXISTS idx_products_city_status ON products(city, status)",
+            "CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id)",
+            "CREATE INDEX IF NOT EXISTS idx_products_boost_created ON products(boost_level, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_conversations_buyer_updated ON conversations(buyer_id, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_conversations_seller_updated ON conversations(seller_id, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_target_created ON notifications(target_user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_payment_orders_user_status ON payment_orders(user_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_payment_orders_external ON payment_orders(external_id)",
+            "CREATE INDEX IF NOT EXISTS idx_entitlements_user_status ON publish_entitlements(user_id, status, selected_at)",
+            "CREATE INDEX IF NOT EXISTS idx_product_view_events_time ON product_view_events(product_id, viewed_at)",
+        ]:
+            db.execute(idx_sql)
 
         categories = [
             ("Veículos", "veiculos", "🚗"),
@@ -957,6 +1148,15 @@ class PasswordChangeIn(BaseModel):
     new_password: str
 
 
+class EmailOnlyIn(BaseModel):
+    email: str
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    new_password: str
+
+
 class AdminUserStatusIn(BaseModel):
     status: str
 
@@ -1127,40 +1327,57 @@ def get_plan(code: str, db=None, include_inactive=False):
 
 
 def set_publish_plan_access(db, user_id: str, plan_code: str, status: str = "ready", payment_order_id: str | None = None, product_id: str | None = None):
+    """Create/update one entitlement without destroying other paid purchases."""
     now = now_iso()
+    source_key = f"payment:{payment_order_id}" if payment_order_id else (f"free:{user_id}" if plan_code == "boost_7" else f"manual:{user_id}:{uuid.uuid4().hex}")
+    existing = db.execute("SELECT id FROM publish_entitlements WHERE source_key=?", (source_key,)).fetchone()
+    if existing:
+        db.execute(
+            "UPDATE publish_entitlements SET plan_code=?,status=?,product_id=?,updated_at=? WHERE id=?",
+            (plan_code, status, product_id, now, existing["id"]),
+        )
+        entitlement_id = existing["id"]
+    else:
+        entitlement_id = str(uuid.uuid4())
+        db.execute(
+            """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,selected_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (entitlement_id, user_id, plan_code, status, payment_order_id, product_id, source_key, now, now),
+        )
+    # Keep the legacy table synchronized for older deployments/frontends.
     db.execute(
         """INSERT INTO publish_plan_access(user_id,plan_code,status,payment_order_id,product_id,selected_at,updated_at)
            VALUES (?,?,?,?,?,?,?)
-           ON CONFLICT(user_id) DO UPDATE SET
-             plan_code=excluded.plan_code,
-             status=excluded.status,
-             payment_order_id=excluded.payment_order_id,
-             product_id=excluded.product_id,
-             selected_at=excluded.selected_at,
-             updated_at=excluded.updated_at""",
+           ON CONFLICT(user_id) DO UPDATE SET plan_code=excluded.plan_code,status=excluded.status,
+             payment_order_id=excluded.payment_order_id,product_id=excluded.product_id,
+             selected_at=excluded.selected_at,updated_at=excluded.updated_at""",
         (user_id, plan_code, status, payment_order_id, product_id, now, now),
     )
-
+    return entitlement_id
 
 def get_publish_plan_access(db, user_id: str):
-    row = db.execute("SELECT * FROM publish_plan_access WHERE user_id=?", (user_id,)).fetchone()
+    row = db.execute(
+        "SELECT * FROM publish_entitlements WHERE user_id=? AND status='ready' ORDER BY selected_at ASC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
+    ready_count = db.execute("SELECT COUNT(*) n FROM publish_entitlements WHERE user_id=? AND status='ready'", (user_id,)).fetchone()["n"]
     if not row:
-        free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
-        return {"ready": False, "status": "none", "plan": None, "free_used": free_used, "free_available": not free_used}
+        return {"ready": False, "status": "none", "plan": None, "free_used": free_used, "free_available": not free_used, "ready_count": int(ready_count or 0)}
     data = dict(row)
     plan = get_plan(data.get("plan_code"), db, include_inactive=True)
-    free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
     return {
-        "ready": data.get("status") == "ready" and bool(plan),
+        "ready": bool(plan),
         "status": data.get("status") or "none",
+        "entitlement_id": data.get("id"),
         "plan": plan,
         "payment_order_id": data.get("payment_order_id"),
         "product_id": data.get("product_id"),
         "selected_at": data.get("selected_at"),
         "free_used": free_used,
         "free_available": not free_used,
+        "ready_count": int(ready_count or 0),
     }
-
 
 def create_session(db, user_id: str, provider: str = "local"):
     token = secrets.token_urlsafe(32)
@@ -1168,7 +1385,7 @@ def create_session(db, user_id: str, provider: str = "local"):
     authenticated_at = now_iso()
     db.execute(
         "INSERT INTO sessions(token,user_id,expires_at,auth_provider,authenticated_at) VALUES (?,?,?,?,?)",
-        (token, user_id, expires, provider or "local", authenticated_at),
+        (session_token_key(token), user_id, expires, provider or "local", authenticated_at),
     )
     db.commit()
     return token
@@ -1207,10 +1424,11 @@ def current_user(authorization: Optional[str] = Header(default=None)):
         raise HTTPException(401, "Faça login para continuar")
     token = authorization.split(" ", 1)[1]
     with conn() as db:
+        raw_token, hashed_token = _token_candidates(token)
         row = db.execute(
             """SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
-               WHERE s.token=? AND s.expires_at>?""",
-            (token, now_iso()),
+               WHERE s.token IN (?,?) AND s.expires_at>?""",
+            (raw_token, hashed_token, now_iso()),
         ).fetchone()
     if not row or row["status"] != "active":
         raise HTTPException(401, "Sessão inválida, expirada ou conta bloqueada")
@@ -1222,11 +1440,12 @@ def current_auth_context(authorization: Optional[str] = Header(default=None)):
         raise HTTPException(401, "Faça login para continuar")
     token = authorization.split(" ", 1)[1]
     with conn() as db:
+        raw_token, hashed_token = _token_candidates(token)
         row = db.execute(
-            """SELECT u.*, s.auth_provider AS session_auth_provider, s.authenticated_at AS session_authenticated_at
+            """SELECT u.*, s.auth_provider AS session_auth_provider, s.authenticated_at AS session_authenticated_at, s.token AS session_token
                FROM sessions s JOIN users u ON u.id=s.user_id
-               WHERE s.token=? AND s.expires_at>?""",
-            (token, now_iso()),
+               WHERE s.token IN (?,?) AND s.expires_at>?""",
+            (raw_token, hashed_token, now_iso()),
         ).fetchone()
     if not row or row["status"] != "active":
         raise HTTPException(401, "Sessão inválida ou expirada")
@@ -1322,9 +1541,10 @@ def optional_user(authorization: Optional[str] = Header(default=None)):
         return None
     token = authorization.split(" ", 1)[1]
     with conn() as db:
+        raw_token, hashed_token = _token_candidates(token)
         row = db.execute(
-            "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?",
-            (token, now_iso()),
+            "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token IN (?,?) AND s.expires_at>?",
+            (raw_token, hashed_token, now_iso()),
         ).fetchone()
     return dict(row) if row and row["status"] == "active" else None
 
@@ -1400,9 +1620,66 @@ def product_dict(db, row, user_id: str | None = None):
     return data
 
 
+def products_to_dicts(db, rows, user_id: str | None = None):
+    """Serialize product lists with two bulk queries instead of an N+1 query per card."""
+    rows = list(rows or [])
+    if not rows:
+        return []
+    seller_ids = sorted({r["seller_id"] for r in rows if r["seller_id"]})
+    sellers = {}
+    if seller_ids:
+        placeholders = ",".join("?" for _ in seller_ids)
+        seller_rows = db.execute(
+            f"SELECT id,name,verified,created_at,avatar_url FROM users WHERE id IN ({placeholders})",
+            tuple(seller_ids),
+        ).fetchall()
+        sellers = {r["id"]: dict(r) for r in seller_rows}
+        for seller in sellers.values():
+            seller["verified"] = bool(seller.get("verified"))
+    favorites = set()
+    if user_id:
+        ids = [r["id"] for r in rows]
+        placeholders = ",".join("?" for _ in ids)
+        fav_rows = db.execute(
+            f"SELECT product_id FROM favorites WHERE user_id=? AND product_id IN ({placeholders})",
+            (user_id, *ids),
+        ).fetchall()
+        favorites = {r["product_id"] for r in fav_rows}
+    out = []
+    for row in rows:
+        data = dict(row)
+        data["seller"] = sellers.get(data["seller_id"])
+        data["favorite"] = data["id"] in favorites
+        paid_featured = False
+        if data.get("featured_until"):
+            try:
+                paid_featured = datetime.fromisoformat(data["featured_until"]) > now_dt()
+            except Exception:
+                pass
+        data["featured_active"] = paid_featured if data.get("featured_until") else bool(data.get("featured"))
+        data["images"] = normalize_product_images(data)
+        if data["images"]:
+            data["image_url"] = data["images"][0]
+        try:
+            original = float(data.get("original_price")) if data.get("original_price") is not None else None
+        except Exception:
+            original = None
+        current = float(data.get("price") or 0)
+        data["promo_active"] = bool(original and original > current)
+        mode = str(data.get("payment_mode") or "cash").lower()
+        if mode not in {"cash", "installments"}:
+            mode = "cash"
+        data["payment_mode"] = mode
+        data["accepts_installments"] = mode == "installments"
+        data["payment_mode_label"] = "Parcelamento disponível" if mode == "installments" else "À vista"
+        data["free_plan"] = data.get("plan_code") == "boost_7"
+        out.append(data)
+    return out
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.17.3", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -1580,10 +1857,15 @@ def social_login(payload: SocialLoginIn):
 
 @app.post("/api/auth/register")
 def register(payload: RegisterIn):
-    if len(payload.password) < 6:
-        raise HTTPException(400, "A senha precisa ter pelo menos 6 caracteres")
-    if not payload.name.strip() or "@" not in payload.email:
+    if len(payload.password) < 8:
+        raise HTTPException(400, "A senha precisa ter pelo menos 8 caracteres")
+    name = payload.name.strip()
+    email = payload.email.lower().strip()
+    phone_digits = "".join(ch for ch in payload.phone if ch.isdigit())
+    if len(name) < 2 or "@" not in email or email.startswith("@") or email.endswith("@"): 
         raise HTTPException(400, "Nome e e-mail válidos são obrigatórios")
+    if phone_digits and len(phone_digits) not in {10, 11}:
+        raise HTTPException(400, "Informe um WhatsApp brasileiro válido com DDD")
     uid = str(uuid.uuid4())
     salt, pwhash = hash_password(payload.password)
     try:
@@ -1591,13 +1873,82 @@ def register(payload: RegisterIn):
             db.execute(
                 """INSERT INTO users(id,name,email,phone,password_salt,password_hash,created_at,role,verified,status,email_verified,auth_provider)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (uid, payload.name.strip(), payload.email.lower().strip(), payload.phone.strip(), salt, pwhash, now_iso(), "user", 0, "active", 0, "local"),
+                (uid, name, email, phone_digits, salt, pwhash, now_iso(), "user", 0, "active", 0, "local"),
             )
             token = create_session(db, uid, "local")
             row = db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     except DBIntegrityError:
         raise HTTPException(409, "Este e-mail já está cadastrado")
-    return {"token": token, "user": user_public(row)}
+    email_sent = _send_verification_email(row) if ACCOUNT_TOKEN_SECRET else False
+    return {"token": token, "user": user_public(row), "verification_email_sent": email_sent}
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: Optional[str] = Header(default=None)):
+    if authorization and authorization.lower().startswith("bearer "):
+        raw = authorization.split(" ", 1)[1]
+        raw_token, hashed_token = _token_candidates(raw)
+        with conn() as db:
+            db.execute("DELETE FROM sessions WHERE token IN (?,?)", (raw_token, hashed_token))
+            db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification(payload: EmailOnlyIn):
+    email = payload.email.lower().strip()
+    with conn() as db:
+        row = db.execute("SELECT * FROM users WHERE LOWER(email)=?", (email,)).fetchone()
+    sent = False
+    if row and not bool(_row_value(row, "email_verified", 0)) and ACCOUNT_TOKEN_SECRET:
+        sent = _send_verification_email(row)
+    # Do not disclose whether an account exists.
+    return {"ok": True, "message": "Se o e-mail estiver cadastrado e pendente, enviaremos um novo link.", "sent": sent if not USE_POSTGRES else None}
+
+
+@app.get("/api/auth/verify-email")
+def verify_email(token: str):
+    payload = _read_account_token(token, "verify-email")
+    with conn() as db:
+        row = db.execute("SELECT * FROM users WHERE id=?", (payload["uid"],)).fetchone()
+        if not row:
+            raise HTTPException(400, "Conta não encontrada")
+        expected_version = hashlib.sha256((str(_row_value(row, "email", "")) + str(_row_value(row, "created_at", ""))).encode()).hexdigest()[:16]
+        if payload.get("version") != expected_version:
+            raise HTTPException(400, "Link inválido")
+        db.execute("UPDATE users SET email_verified=1,email_verification_source='email' WHERE id=?", (row["id"],))
+        _recompute_user_verification(db, row["id"])
+        db.commit()
+    return RedirectResponse(f"{FRONTEND_URL}/entrar?verified=1", status_code=303)
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(payload: EmailOnlyIn):
+    email = payload.email.lower().strip()
+    with conn() as db:
+        row = db.execute("SELECT * FROM users WHERE LOWER(email)=?", (email,)).fetchone()
+    if row and _has_password(row) and ACCOUNT_TOKEN_SECRET:
+        _send_password_reset_email(row)
+    return {"ok": True, "message": "Se existir uma conta com esse e-mail, você receberá as instruções de redefinição."}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(payload: ResetPasswordIn):
+    if len(payload.new_password) < 8:
+        raise HTTPException(400, "A nova senha precisa ter pelo menos 8 caracteres")
+    token_data = _read_account_token(payload.token, "reset-password")
+    with conn() as db:
+        row = db.execute("SELECT * FROM users WHERE id=?", (token_data["uid"],)).fetchone()
+        if not row:
+            raise HTTPException(400, "Conta não encontrada")
+        expected_version = hashlib.sha256(str(_row_value(row, "password_hash", "")).encode()).hexdigest()[:16]
+        if token_data.get("version") != expected_version:
+            raise HTTPException(400, "Este link já foi utilizado ou não é mais válido")
+        salt, pwhash = hash_password(payload.new_password)
+        db.execute("UPDATE users SET password_salt=?,password_hash=? WHERE id=?", (salt, pwhash, row["id"]))
+        db.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+        db.commit()
+    return {"ok": True, "message": "Senha redefinida. Faça login novamente."}
 
 
 @app.post("/api/auth/login")
@@ -1715,8 +2066,13 @@ def update_my_password(payload: PasswordChangeIn, user=Depends(current_auth_cont
     salt, pwhash = hash_password(payload.new_password)
     with conn() as db:
         db.execute("UPDATE users SET password_salt=?,password_hash=? WHERE id=?", (salt, pwhash, user["id"]))
+        current_session = _row_value(user, "session_token", "")
+        if current_session:
+            db.execute("DELETE FROM sessions WHERE user_id=? AND token<>?", (user["id"], current_session))
+        else:
+            db.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
         db.commit()
-    return {"ok": True, "message": "Senha alterada com sucesso" if had_password else "Senha criada com sucesso. Agora você também pode entrar por e-mail e senha"}
+    return {"ok": True, "message": ("Senha alterada com sucesso. As outras sessões foram encerradas." if had_password else "Senha criada com sucesso. As outras sessões foram encerradas.")}
 
 
 @app.get("/api/categories")
@@ -1794,17 +2150,17 @@ def list_products(search: str = "", category: str = "", city: str = "", neighbor
     where = ["status='active'"]
     args = []
     if search.strip():
-        where.append("(title LIKE ? OR description LIKE ? OR city LIKE ? OR neighborhood LIKE ?)")
+        where.append("(LOWER(title) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?) OR LOWER(city) LIKE LOWER(?) OR LOWER(neighborhood) LIKE LOWER(?))")
         q = f"%{search.strip()}%"
         args += [q, q, q, q]
     if category.strip():
         where.append("category_slug=?")
         args.append(category.strip())
     if city.strip():
-        where.append("city LIKE ?")
+        where.append("LOWER(city) LIKE LOWER(?)")
         args.append(f"%{city.strip()}%")
     if neighborhood.strip():
-        where.append("neighborhood LIKE ?")
+        where.append("LOWER(neighborhood) LIKE LOWER(?)")
         args.append(f"%{neighborhood.strip()}%")
     order = {
         "newest": "boost_level DESC, created_at DESC",
@@ -1818,18 +2174,28 @@ def list_products(search: str = "", category: str = "", city: str = "", neighbor
         safe_limit = max(1, min(int(limit or 50), 100))
         safe_offset = max(0, int(offset or 0))
         rows = db.execute(f"SELECT * FROM products WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ? OFFSET ?", (*args, safe_limit, safe_offset)).fetchall()
-        return [product_dict(db, r, user["id"] if user else None) for r in rows]
+        return products_to_dicts(db, rows, user["id"] if user else None)
 
 
 @app.get("/api/products/{product_id}")
-def get_product(product_id: str, user=Depends(optional_user)):
+def get_product(product_id: str, request: Request, user=Depends(optional_user)):
     with conn() as db:
         cleanup_expired_features(db)
         db.commit()
         row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
         if not row or (row["status"] != "active" and (not user or (row["seller_id"] != user["id"] and user["role"] != "admin"))):
             raise HTTPException(404, "Anúncio não encontrado")
-        db.execute("UPDATE products SET views=views+1 WHERE id=?", (product_id,))
+        # Count at most one view per viewer/product/hour to reduce refresh/bot inflation.
+        viewer_raw = f"user:{user['id']}" if user else f"ip:{_request_ip(request)}|ua:{request.headers.get('user-agent','')[:160]}"
+        secret = (ACCOUNT_TOKEN_SECRET or "classificaja-view-v2.18").encode("utf-8")
+        viewer_key = hmac.new(secret, viewer_raw.encode("utf-8"), hashlib.sha256).hexdigest()
+        bucket = now_dt().strftime("%Y-%m-%dT%H")
+        db.execute(
+            "INSERT INTO product_view_events(product_id,viewer_key,view_bucket,viewed_at) VALUES (?,?,?,?) ON CONFLICT(product_id,viewer_key,view_bucket) DO NOTHING",
+            (product_id, viewer_key, bucket, now_iso()),
+        )
+        if db.total_changes > 0:
+            db.execute("UPDATE products SET views=views+1 WHERE id=?", (product_id,))
         db.commit()
         row = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
         return product_dict(db, row, user["id"] if user else None)
@@ -1871,7 +2237,7 @@ def related_products(product_id: str, limit: int = 4, user=Depends(optional_user
             (product_id, base["category_slug"], low, high, base["city"], price, limit * 3),
         ).fetchall()
         if add_rows(rows):
-            return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+            return products_to_dicts(db, items[:limit], user["id"] if user else None)
 
         # 2) Mesma categoria, mesmo que o preço seja diferente.
         rows = db.execute(
@@ -1883,7 +2249,7 @@ def related_products(product_id: str, limit: int = 4, user=Depends(optional_user
             (product_id, base["category_slug"], base["city"], price, limit * 3),
         ).fetchall()
         if add_rows(rows):
-            return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+            return products_to_dicts(db, items[:limit], user["id"] if user else None)
 
         # 3) Mesma cidade, qualquer categoria, priorizando preço próximo.
         rows = db.execute(
@@ -1894,7 +2260,7 @@ def related_products(product_id: str, limit: int = 4, user=Depends(optional_user
             (product_id, base["city"], price, limit * 3),
         ).fetchall()
         if add_rows(rows):
-            return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+            return products_to_dicts(db, items[:limit], user["id"] if user else None)
 
         # 4) Último fallback: outros anúncios ativos do marketplace.
         rows = db.execute(
@@ -1906,7 +2272,7 @@ def related_products(product_id: str, limit: int = 4, user=Depends(optional_user
         ).fetchall()
         add_rows(rows)
 
-        return [product_dict(db, r, user["id"] if user else None) for r in items[:limit]]
+        return products_to_dicts(db, items[:limit], user["id"] if user else None)
 
 
 @app.post("/api/products")
@@ -1916,23 +2282,31 @@ async def create_product(
     original_price: float | None = Form(default=None), payment_mode: str = Form("cash"),
     images: list[UploadFile] = File(default=[]), image: UploadFile | None = File(default=None), user=Depends(current_user),
 ):
+    title = title.strip()
+    description = description.strip()
+    city = city.strip()
+    state = state.strip().upper()
+    category_slug = category_slug.strip()
+    if len(title) < 3 or len(title) > 160:
+        raise HTTPException(400, "Informe um título entre 3 e 160 caracteres")
+    if len(description) < 5 or len(description) > 10000:
+        raise HTTPException(400, "Informe uma descrição válida")
     if price < 0:
         raise HTTPException(400, "Preço inválido")
+    if not city or len(state) != 2:
+        raise HTTPException(400, "Informe cidade e UF válidas")
     payment_mode = str(payment_mode or "cash").strip().lower()
     if payment_mode not in {"cash", "installments"}:
         raise HTTPException(400, "Forma de venda inválida")
-    gallery_files = [img for img in (images or []) if getattr(img, "filename", None)]
-    if image and image.filename:
-        gallery_files.insert(0, image)
-    gallery_urls = []
-    for img in gallery_files[:8]:
-        gallery_urls.append(await save_product_image(img))
-    image_url = gallery_urls[0] if gallery_urls else None
     if original_price is not None and original_price <= price:
         original_price = None
-    pid = str(uuid.uuid4())
+
+    # Validate plan/category BEFORE writing any image to disk or Supabase Storage.
     with conn() as db:
-        access_row = db.execute("SELECT * FROM publish_plan_access WHERE user_id=? AND status='ready'", (user["id"],)).fetchone()
+        access_row = db.execute(
+            "SELECT * FROM publish_entitlements WHERE user_id=? AND status='ready' ORDER BY selected_at ASC LIMIT 1",
+            (user["id"],),
+        ).fetchone()
         if not access_row:
             raise HTTPException(403, "Escolha um plano antes de publicar o anúncio")
         access_data = dict(access_row)
@@ -1941,40 +2315,59 @@ async def create_product(
             raise HTTPException(403, "O plano selecionado não está mais disponível")
         if not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
             raise HTTPException(400, "Categoria inválida")
-        created_at = now_iso()
-        boost_level = int(selected_plan.get("boost") or 0)
-        is_featured = 1 if boost_level > 0 else 0
-        plan_days = max(0, int(selected_plan.get("days") or 0))
-        featured_until = None
-        plan_expires_at = (now_dt() + timedelta(days=plan_days)).isoformat() if plan_days else None
-        if is_featured:
-            featured_until = plan_expires_at
         if selected_plan.get("code") == "boost_7":
             if db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user["id"],)).fetchone():
                 raise HTTPException(403, "O Plano Grátis já foi utilizado nesta conta. Escolha Plus ou Premium.")
-        db.execute(
-            """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,featured,featured_until,boost_level,plan_code,plan_expires_at,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, user["id"], title.strip(), description.strip(), price, category_slug, city.strip(), state.strip().upper(), neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", is_featured, featured_until, boost_level, selected_plan.get("code"), plan_expires_at, created_at, created_at),
-        )
-        if selected_plan.get("code") == "boost_7":
+            if REQUIRE_EMAIL_VERIFICATION_FOR_FREE and not bool(user.get("email_verified")):
+                raise HTTPException(403, "Confirme seu e-mail antes de utilizar o Plano Grátis.")
+
+    gallery_files = [img for img in (images or []) if getattr(img, "filename", None)]
+    if image and image.filename:
+        gallery_files.insert(0, image)
+    if len(gallery_files) > 8:
+        raise HTTPException(400, "Envie no máximo 8 imagens por anúncio")
+    gallery_urls = []
+    try:
+        for img in gallery_files:
+            gallery_urls.append(await save_product_image(img))
+        image_url = gallery_urls[0] if gallery_urls else None
+        pid = str(uuid.uuid4())
+        with conn() as db:
+            # Recheck/lock the entitlement as close to consumption as possible.
+            access_row = db.execute("SELECT * FROM publish_entitlements WHERE id=? AND user_id=? AND status='ready'", (access_data["id"], user["id"])).fetchone()
+            if not access_row:
+                raise HTTPException(409, "Este plano já foi utilizado. Atualize a página e tente novamente.")
+            created_at = now_iso()
+            boost_level = int(selected_plan.get("boost") or 0)
+            is_featured = 1 if boost_level > 0 else 0
+            plan_days = max(0, int(selected_plan.get("days") or 0))
+            plan_expires_at = (now_dt() + timedelta(days=plan_days)).isoformat() if plan_days else None
+            featured_until = plan_expires_at if is_featured else None
             db.execute(
-                """INSERT INTO free_plan_usage(user_id,product_id,used_at) VALUES (?,?,?)
-                   ON CONFLICT(user_id) DO NOTHING""",
-                (user["id"], pid, created_at),
+                """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,featured,featured_until,boost_level,plan_code,plan_expires_at,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (pid, user["id"], title, description, price, category_slug, city, state, neighborhood.strip(), condition, image_url, json.dumps(gallery_urls), original_price, payment_mode, "active", is_featured, featured_until, boost_level, selected_plan.get("code"), plan_expires_at, created_at, created_at),
             )
-        db.execute(
-            "UPDATE publish_plan_access SET status='used',product_id=?,updated_at=? WHERE user_id=?",
-            (pid, created_at, user["id"]),
-        )
-        if access_data.get("payment_order_id"):
-            db.execute("UPDATE payment_orders SET product_id=? WHERE id=?", (pid, access_data["payment_order_id"]))
-        db.execute(
-            "INSERT INTO notifications(id,type,product_id,title,body,created_at) VALUES (?,?,?,?,?,?)",
-            (str(uuid.uuid4()), "new_product", pid, "Novo anúncio publicado", f"{title.strip()} • {city.strip()} - {state.strip().upper()}", created_at),
-        )
-        db.commit()
-    return {"id": pid, "plan_code": selected_plan.get("code")}
+            if selected_plan.get("code") == "boost_7":
+                db.execute(
+                    """INSERT INTO free_plan_usage(user_id,product_id,used_at) VALUES (?,?,?)
+                       ON CONFLICT(user_id) DO NOTHING""",
+                    (user["id"], pid, created_at),
+                )
+            db.execute("UPDATE publish_entitlements SET status='used',product_id=?,updated_at=? WHERE id=?", (pid, created_at, access_data["id"]))
+            # Legacy mirror keeps old clients consistent with the consumed entitlement.
+            db.execute("UPDATE publish_plan_access SET status='used',product_id=?,updated_at=? WHERE user_id=?", (pid, created_at, user["id"]))
+            if access_data.get("payment_order_id"):
+                db.execute("UPDATE payment_orders SET product_id=? WHERE id=?", (pid, access_data["payment_order_id"]))
+            db.execute(
+                "INSERT INTO notifications(id,type,product_id,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                (str(uuid.uuid4()), "new_product", pid, "Novo anúncio publicado", f"{title} • {city} - {state}", created_at),
+            )
+            db.commit()
+        return {"id": pid, "plan_code": selected_plan.get("code")}
+    except Exception:
+        delete_product_images(gallery_urls)
+        raise
 
 
 @app.put("/api/products/{product_id}")
@@ -2023,9 +2416,13 @@ async def replace_product_image(product_id: str, image: UploadFile = File(...), 
         old_images = normalize_product_images(dict(row))
 
     image_url = await save_product_image(image)
-    with conn() as db:
-        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (image_url, json.dumps([image_url]), now_iso(), product_id))
-        db.commit()
+    try:
+        with conn() as db:
+            db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (image_url, json.dumps([image_url]), now_iso(), product_id))
+            db.commit()
+    except Exception:
+        delete_product_image(image_url)
+        raise
     delete_product_images(old_images)
     return {"ok": True, "image_url": image_url, "images": [image_url]}
 
@@ -2043,11 +2440,15 @@ async def replace_product_gallery(product_id: str, images: list[UploadFile] = Fi
             raise HTTPException(403, "Você não pode editar este anúncio")
         old_images = normalize_product_images(dict(row))
     gallery_urls = []
-    for img in files[:8]:
-        gallery_urls.append(await save_product_image(img))
-    with conn() as db:
-        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (gallery_urls[0], json.dumps(gallery_urls), now_iso(), product_id))
-        db.commit()
+    try:
+        for img in files[:8]:
+            gallery_urls.append(await save_product_image(img))
+        with conn() as db:
+            db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (gallery_urls[0], json.dumps(gallery_urls), now_iso(), product_id))
+            db.commit()
+    except Exception:
+        delete_product_images(gallery_urls)
+        raise
     delete_product_images(old_images)
     return {"ok": True, "image_url": gallery_urls[0], "images": gallery_urls}
 
@@ -2067,12 +2468,17 @@ async def add_product_gallery_images(product_id: str, images: list[UploadFile] =
     available = max(0, 8 - len(gallery_urls))
     if available <= 0:
         raise HTTPException(400, "A galeria já atingiu o limite de 8 imagens")
-    for img in files[:available]:
-        gallery_urls.append(await save_product_image(img))
-    with conn() as db:
-        primary = gallery_urls[0] if gallery_urls else None
-        db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (primary, json.dumps(gallery_urls), now_iso(), product_id))
-        db.commit()
+    existing_count = len(gallery_urls)
+    try:
+        for img in files[:available]:
+            gallery_urls.append(await save_product_image(img))
+        with conn() as db:
+            primary = gallery_urls[0] if gallery_urls else None
+            db.execute("UPDATE products SET image_url=?,image_urls=?,updated_at=? WHERE id=?", (primary, json.dumps(gallery_urls), now_iso(), product_id))
+            db.commit()
+    except Exception:
+        delete_product_images(gallery_urls[existing_count:])
+        raise
     return {"ok": True, "image_url": gallery_urls[0], "images": gallery_urls}
 
 
@@ -2152,7 +2558,7 @@ def my_products(user=Depends(current_user)):
         cleanup_expired_features(db)
         db.commit()
         rows = db.execute("SELECT * FROM products WHERE seller_id=? ORDER BY created_at DESC", (user["id"],)).fetchall()
-        return [product_dict(db, r, user["id"]) for r in rows]
+        return products_to_dicts(db, rows, user["id"])
 
 
 @app.get("/api/me/dashboard")
@@ -2334,7 +2740,7 @@ def favorites(user=Depends(current_user)):
     with conn() as db:
         rows = db.execute("""SELECT p.* FROM products p JOIN favorites f ON f.product_id=p.id
                            WHERE f.user_id=? ORDER BY p.created_at DESC""", (user["id"],)).fetchall()
-        return [product_dict(db, r, user["id"]) for r in rows]
+        return products_to_dicts(db, rows, user["id"])
 
 
 # Chat -----------------------------------------------------------------------
@@ -2395,7 +2801,8 @@ def hide_conversation(conversation_id: str, user=Depends(current_user)):
         if not c or user["id"] not in {c["buyer_id"], c["seller_id"]}:
             raise HTTPException(404, "Conversa não encontrada")
         db.execute(
-            "INSERT OR REPLACE INTO hidden_conversations(user_id,conversation_id,hidden_at) VALUES (?,?,?)",
+            """INSERT INTO hidden_conversations(user_id,conversation_id,hidden_at) VALUES (?,?,?)
+               ON CONFLICT(user_id,conversation_id) DO UPDATE SET hidden_at=excluded.hidden_at""",
             (user["id"], conversation_id, now_iso()),
         )
         db.execute(
@@ -2468,8 +2875,10 @@ def report_product(product_id: str, payload: ReportIn, user=Depends(current_user
     with conn() as db:
         if not db.execute("SELECT 1 FROM products WHERE id=?", (product_id,)).fetchone():
             raise HTTPException(404, "Anúncio não encontrado")
+        if db.execute("SELECT 1 FROM reports WHERE reporter_id=? AND product_id=? AND status='open'", (user["id"], product_id)).fetchone():
+            raise HTTPException(409, "Você já possui uma denúncia aberta para este anúncio")
         rid = str(uuid.uuid4())
-        db.execute("INSERT INTO reports(id,reporter_id,product_id,reason,details,status,created_at) VALUES (?,?,?,?,?,'open',?)", (rid, user["id"], product_id, payload.reason.strip(), payload.details.strip(), now_iso()))
+        db.execute("INSERT INTO reports(id,reporter_id,product_id,reason,details,status,created_at) VALUES (?,?,?,?,?,'open',?)", (rid, user["id"], product_id, payload.reason.strip()[:120], payload.details.strip()[:2000], now_iso()))
         db.commit()
     return {"id": rid, "ok": True}
 
@@ -2480,9 +2889,33 @@ def _digits(value: str | None) -> str:
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
 
+def _valid_cpf(cpf: str) -> bool:
+    if len(cpf) != 11 or cpf == cpf[0] * 11:
+        return False
+    nums = [int(x) for x in cpf]
+    for size in (9, 10):
+        total = sum(nums[i] * (size + 1 - i) for i in range(size))
+        digit = (total * 10 % 11) % 10
+        if digit != nums[size]:
+            return False
+    return True
+
+def _valid_cnpj(cnpj: str) -> bool:
+    if len(cnpj) != 14 or cnpj == cnpj[0] * 14:
+        return False
+    nums = [int(x) for x in cnpj]
+    weights1 = [5,4,3,2,9,8,7,6,5,4,3,2]
+    weights2 = [6,5,4,3,2,9,8,7,6,5,4,3,2]
+    def digit(values, weights):
+        rem = sum(v*w for v,w in zip(values, weights)) % 11
+        return 0 if rem < 2 else 11-rem
+    d1 = digit(nums[:12], weights1)
+    d2 = digit(nums[:12] + [d1], weights2)
+    return nums[12] == d1 and nums[13] == d2
+
 def _validate_tax_id(value: str | None) -> str:
     tax_id = _digits(value)
-    if len(tax_id) not in {11, 14}:
+    if not ((_valid_cpf(tax_id) if len(tax_id) == 11 else False) or (_valid_cnpj(tax_id) if len(tax_id) == 14 else False)):
         raise HTTPException(400, "Informe um CPF ou CNPJ válido para gerar o PIX PagBank")
     return tax_id
 
@@ -2682,6 +3115,8 @@ def create_payment(payload: PaymentIn, request: Request, user=Depends(current_us
             raise HTTPException(400, "Plano inválido ou indisponível")
         if plan.get("free") or float(plan.get("amount") or 0) <= 0:
             # Plano Grátis: cortesia de uso único por conta; não cria cobrança.
+            if REQUIRE_EMAIL_VERIFICATION_FOR_FREE and not bool(user.get("email_verified")):
+                raise HTTPException(403, "Confirme seu e-mail antes de liberar o Plano Grátis.")
             if db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user["id"],)).fetchone():
                 raise HTTPException(403, "O Plano Grátis já foi utilizado nesta conta. Escolha Plus ou Premium para publicar novamente.")
             set_publish_plan_access(db, user["id"], plan["code"], "ready", None, None)
@@ -2952,7 +3387,7 @@ def admin_products(user=Depends(admin_user)):
                FROM products p LEFT JOIN users u ON u.id=p.seller_id
                ORDER BY p.created_at DESC LIMIT 500"""
         ).fetchall()
-        return [product_dict(db, r, user["id"]) for r in rows]
+        return products_to_dicts(db, rows, user["id"])
 
 
 @app.put("/api/admin/products/{product_id}/status")

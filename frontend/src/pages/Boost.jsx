@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {Check, CreditCard, Crown, QrCode, Sparkles, Zap, X} from 'lucide-react';
+import {Check, Copy, Crown, QrCode, Sparkles, Zap, X} from 'lucide-react';
 import {Link,useParams} from 'react-router-dom';
 import {api} from '../lib/api';
 const money=v=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -12,16 +12,8 @@ const rows = [
   {label:'Mais visualizações no catálogo', values:[false,false,true]},
   {label:'Maior exposição entre anúncios', values:[false,false,true]},
 ];
-function tierClass(index,total){
-  if(index===0) return 'basic';
-  if(index===total-1) return 'premium';
-  return 'plus';
-}
-function renderCell(value){
-  if(value===true) return <span className="table-yes"><Check size={15}/> Sim</span>;
-  if(value===false) return <span className="table-no"><X size={15}/> Não</span>;
-  return <span className="table-text">{value}</span>;
-}
+function tierClass(index,total){if(index===0)return'basic';if(index===total-1)return'premium';return'plus'}
+function renderCell(value){if(value===true)return <span className="table-yes"><Check size={15}/> Sim</span>;if(value===false)return <span className="table-no"><X size={15}/> Não</span>;return <span className="table-text">{value}</span>}
 
 export default function Boost(){
  const {id}=useParams();
@@ -29,87 +21,83 @@ export default function Boost(){
  const [p,setP]=useState(null);
  const [order,setOrder]=useState(null);
  const [busy,setBusy]=useState(false);
- const [method,setMethod]=useState('pix');
+ const [taxId,setTaxId]=useState('');
+ const [qrImage,setQrImage]=useState('');
+ const [copied,setCopied]=useState(false);
+ const [err,setErr]=useState('');
  useEffect(()=>{api('/api/plans').then(setPlans);api(`/api/products/${id}`).then(setP)},[id]);
- const buy=async code=>{setBusy(true);try{const o=await api('/api/payments',{method:'POST',body:JSON.stringify({product_id:id,plan_code:code,method})});setOrder(o)}finally{setBusy(false)}};
- const confirm=async()=>{setBusy(true);try{await api(`/api/payments/${order.id}/demo-confirm`,{method:'POST'});setOrder({...order,status:'paid'});const updated=await api(`/api/products/${id}`);setP(updated)}finally{setBusy(false)}};
+
+ useEffect(()=>{
+   if(!order?.id || order.status==='paid') return;
+   let cancelled=false;
+   if(order.qr_image_available){
+     api(`/api/payments/${order.id}/qrcode`).then(r=>{if(!cancelled)setQrImage(r.data_url||'')}).catch(()=>{});
+   }
+   const timer=setInterval(async()=>{
+     try{
+       const status=await api(`/api/payments/${order.id}/status`);
+       if(cancelled)return;
+       if(status.status==='paid'){
+         setOrder(prev=>({...prev,status:'paid'}));
+         clearInterval(timer);
+         api(`/api/products/${id}`).then(setP).catch(()=>{});
+       }else if(['failed','cancelled'].includes(status.status)){
+         setOrder(prev=>({...prev,status:status.status}));
+         clearInterval(timer);
+       }
+     }catch{}
+   },5000);
+   return()=>{cancelled=true;clearInterval(timer)};
+ },[order?.id,order?.status,id]);
+
+ const buy=async code=>{
+   setErr('');
+   const digits=taxId.replace(/\D/g,'');
+   if(![11,14].includes(digits.length)){setErr('Informe seu CPF ou CNPJ para gerar o PIX PagBank.');return}
+   setBusy(true);
+   try{
+     const o=await api('/api/payments',{method:'POST',body:JSON.stringify({product_id:id,plan_code:code,method:'pix',tax_id:digits})});
+     setOrder(o);setQrImage('');
+   }catch(e){setErr(e.message)}finally{setBusy(false)}
+ };
+ const copyPix=async()=>{if(!order?.pix_code)return;await navigator.clipboard.writeText(order.pix_code);setCopied(true);setTimeout(()=>setCopied(false),1800)};
 
  return <div className="page boost-page">
   <div className="boost-hero-card">
-    <div>
-      <span className="section-kicker">MONETIZAÇÃO</span>
-      <h1>Impulsione seu anúncio</h1>
-      <p>O plano Grátis mantém seu anúncio publicado normalmente, mas sem prioridade ou destaque. Plus e Premium aumentam a exposição e a posição do anúncio.</p>
-      <div className="boost-hero-benefits">
-        <span><Zap size={16}/> Mais cliques</span>
-        <span><Sparkles size={16}/> Mais destaque</span>
-        <span><Crown size={16}/> Mais prioridade</span>
-      </div>
-    </div>
+    <div><span className="section-kicker">MONETIZAÇÃO</span><h1>Impulsione seu anúncio</h1><p>Plus e Premium aumentam a exposição do anúncio. O pagamento é gerado por PIX real do PagBank.</p><div className="boost-hero-benefits"><span><Zap size={16}/> Mais cliques</span><span><Sparkles size={16}/> Mais destaque</span><span><Crown size={16}/> Mais prioridade</span></div></div>
     {p&&<div className="boost-product boost-product-premium"><Sparkles/><div><b>{p.title}</b><span>{p.featured_active?'Este anúncio já possui destaque ativo.':'Escolha Plus ou Premium para aumentar a exposição do anúncio.'}</span></div></div>}
   </div>
 
   {!order ? <>
-    <div className="payment-methods">
-      <button className={method==='pix'?'selected':''} onClick={()=>setMethod('pix')}><QrCode/> PIX</button>
-      <button className={method==='card'?'selected':''} onClick={()=>setMethod('card')}><CreditCard/> Cartão</button>
-    </div>
-    <div className="provider-installment-note">
-      <b>Forma de pagamento usada somente em Plus e Premium.</b>{' '}
-      {method==='pix'
-        ? <>PIX é à vista em 1x.</>
-        : <>As opções de parcelamento serão carregadas diretamente do gateway/banco quando a integração real estiver ativa.</>}
+    <div className="pagbank-payment-box">
+      <div className="pagbank-payment-title"><QrCode/><div><b>Pagamento via PIX PagBank</b><span>O QR Code será gerado pelo PagBank e confirmado automaticamente após o pagamento.</span></div></div>
+      <label>CPF ou CNPJ do pagador<input value={taxId} onChange={e=>setTaxId(e.target.value)} inputMode="numeric" placeholder="Somente números"/></label>
+      {err&&<div className="form-error">{err}</div>}
     </div>
 
     <div className="plan-grid premium-plan-grid colorful-plans-grid">
-      {plans.map((plan, index)=>{
-        const tier=tierClass(index, plans.length);
-        return <div className={`plan-card ${tier} ${tier==='premium'?'plan-card-featured':''}`} key={plan.code}>
-          <div className="plan-top-badges">
-            <span className="plan-name">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>
-            {tier==='plus' && <span className="plan-chip sold">Mais vendido</span>}
-            {tier==='plus' && <span className="plan-chip value">Melhor custo-benefício</span>}
-            {tier==='premium' && <span className="plan-chip premium-chip">Mais vantagens</span>}
-          </div>
-          <b>{plan.free?'Grátis':money(plan.amount)}</b>
-          <p className="plan-copy">{plan.tagline||'Escolha o nível de exposição do seu anúncio.'}</p>
-          {(plan.features||[]).length>0 && <ul>
-            {(plan.features||[]).map((feature)=><li key={feature}><Check/> {feature}</li>)}
-          </ul>}
-          {(plan.limitations||[]).length>0 && <ul className="plan-limit-list">
-            {(plan.limitations||[]).map((item)=><li key={item}><X/> {item}</li>)}
-          </ul>}
-          {plan.free
-            ? <Link className="plan-free-btn wide" to={`/produto/${id}`}>Continuar no Grátis</Link>
-            : <button className="primary wide" disabled={busy} onClick={()=>buy(plan.code)}>Escolher plano</button>}
-        </div>
-      })}
+      {plans.map((plan,index)=>{const tier=tierClass(index,plans.length);return <div className={`plan-card ${tier} ${tier==='premium'?'plan-card-featured':''}`} key={plan.code}>
+        <div className="plan-top-badges"><span className="plan-name">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>{tier==='plus'&&<span className="plan-chip sold">Mais vendido</span>}{tier==='plus'&&<span className="plan-chip value">Melhor custo-benefício</span>}{tier==='premium'&&<span className="plan-chip premium-chip">Mais vantagens</span>}</div>
+        <b>{plan.free?'Grátis':money(plan.amount)}</b><p className="plan-copy">{plan.tagline||'Escolha o nível de exposição do seu anúncio.'}</p>
+        {(plan.features||[]).length>0&&<ul>{(plan.features||[]).map(feature=><li key={feature}><Check/> {feature}</li>)}</ul>}
+        {(plan.limitations||[]).length>0&&<ul className="plan-limit-list">{(plan.limitations||[]).map(item=><li key={item}><X/> {item}</li>)}</ul>}
+        {plan.free?<Link className="plan-free-btn wide" to={`/produto/${id}`}>Continuar no Grátis</Link>:<button className="primary wide" disabled={busy} onClick={()=>buy(plan.code)}>{busy?'Gerando PIX...':'Pagar com PIX'}</button>}
+      </div>})}
     </div>
 
-    <div className="plan-comparison-wrap boost-comparison-wrap">
-      <div className="comparison-head">
-        <h3>Tabela de comparação</h3>
-        <p>O Grátis não recebe recursos de destaque. Plus e Premium aumentam a exposição.</p>
-      </div>
-      <div className="plan-comparison-table-wrap">
-        <table className="plan-comparison-table">
-          <thead>
-            <tr>
-              <th>Recursos</th>
-              <th className="basic">Grátis</th>
-              <th className="plus">Plus</th>
-              <th className="premium">Premium</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row)=><tr key={row.label}>
-              <td>{row.label}</td>
-              {row.values.map((value, i)=><td key={i}>{renderCell(value)}</td>)}
-            </tr>)}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </> : <div className="checkout-card"><h2>{order.status==='paid'?'Pagamento confirmado':'Pedido criado'}</h2><p>Valor: <b>{money(order.amount)}</b></p><p>Forma: <b>{order.method==='pix'?'PIX':'Cartão'}</b></p><p>Parcelamento: <b>{order.installments?`${order.installments}x`:order.provider_installment_message||'Definido pelo gateway/banco'}</b></p>{order.pix_code&&<div className="pix-box"><QrCode/><code>{order.pix_code}</code></div>}{order.status!=='paid'?<><div className="demo-warning">Modo de demonstração: em produção esta etapa será confirmada automaticamente pelo gateway de pagamento.</div><button className="primary wide" disabled={busy} onClick={confirm}>Simular pagamento aprovado</button></>:<><div className="success-box"><Check/> Destaque ativado com sucesso.</div><Link className="primary wide" to={`/produto/${id}`}>Voltar ao anúncio</Link></>}</div>}
+    <div className="plan-comparison-wrap boost-comparison-wrap"><div className="comparison-head"><h3>Tabela de comparação</h3><p>O Grátis não recebe recursos de destaque. Plus e Premium aumentam a exposição.</p></div><div className="plan-comparison-table-wrap"><table className="plan-comparison-table"><thead><tr><th>Recursos</th><th className="basic">Grátis</th><th className="plus">Plus</th><th className="premium">Premium</th></tr></thead><tbody>{rows.map(row=><tr key={row.label}><td>{row.label}</td>{row.values.map((value,i)=><td key={i}>{renderCell(value)}</td>)}</tr>)}</tbody></table></div></div>
+  </> : <div className={`checkout-card pagbank-checkout ${order.status==='paid'?'paid':''}`}>
+    <h2>{order.status==='paid'?'Pagamento confirmado':order.status==='failed'?'Pagamento recusado':order.status==='cancelled'?'Pagamento cancelado':'Pague com PIX'}</h2>
+    <p>Valor: <b>{money(order.amount)}</b></p>
+    <p>Provedor: <b>PagBank</b></p>
+    {order.status==='pending'&&<>
+      {qrImage&&<img className="pagbank-qr-image" src={qrImage} alt="QR Code PIX PagBank"/>}
+      {order.pix_code&&<div className="pix-copy-area"><code>{order.pix_code}</code><button type="button" className="secondary-btn" onClick={copyPix}><Copy/>{copied?'Copiado':'Copiar PIX'}</button></div>}
+      <div className="pagbank-waiting"><span className="payment-pulse"></span> Aguardando confirmação do PagBank...</div>
+      <small>Depois de pagar, esta tela atualiza automaticamente. O QR Code expira conforme a validade informada pelo PagBank.</small>
+    </>}
+    {order.status==='paid'&&<><div className="success-box"><Check/> Pagamento confirmado. Destaque ativado.</div><Link className="primary wide" to={`/produto/${id}`}>Voltar ao anúncio</Link></>}
+    {['failed','cancelled'].includes(order.status)&&<button className="primary wide" onClick={()=>setOrder(null)}>Gerar novo PIX</button>}
+  </div>}
  </div>
 }

@@ -1,3 +1,9 @@
+# ATUALIZAÇÃO V2.18
+
+Antes de seguir este guia, configure também as novas variáveis de segurança listadas em `VARIAVEIS_RENDER.txt`: `PAYMENT_CONFIG_KEY`, `ACCOUNT_TOKEN_SECRET`, `PUBLIC_BASE_URL`, `FRONTEND_URL` e `SMTP_*`. Em produção, mantenha `REQUIRE_EMAIL_VERIFICATION_FOR_FREE=true` e `RATE_LIMIT_ENABLED=true`.
+
+> A V2.18 mantém compatibilidade de leitura com credenciais PagBank criptografadas pela V2.17.x, mas novas gravações exigem `PAYMENT_CONFIG_KEY`.
+
 # Publicar o ClassificaJá grátis — Supabase + Render
 
 Esta versão já foi preparada para PostgreSQL e Storage persistentes. Em produção, não usamos SQLite nem a pasta local de uploads.

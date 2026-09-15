@@ -25,3 +25,27 @@ services:
         value: "false"
       - key: DB_SSLMODE
         value: require
+      - key: PAYMENT_CONFIG_KEY
+        sync: false
+      - key: ACCOUNT_TOKEN_SECRET
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: REQUIRE_EMAIL_VERIFICATION_FOR_FREE
+        value: "true"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"

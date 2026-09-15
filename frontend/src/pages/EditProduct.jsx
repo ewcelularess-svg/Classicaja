@@ -152,10 +152,10 @@ export default function EditProduct(){
     <label>Descrição<textarea name="description" value={form.description} onChange={change} rows="5" required/></label>
     <div className="two-cols"><label>Preço (R$)<input name="price" value={form.price} onChange={change} type="number" min="0" step="0.01" required/></label><label>Preço anterior / promoção (opcional)<input name="original_price" value={form.original_price} onChange={change} type="number" min="0" step="0.01" placeholder="Ex.: 2500.00"/></label></div>
     <div className="payment-choice-box">
-      <div><b>Forma de venda</b><span>À vista ou parcelado. As parcelas reais serão fornecidas pelo banco/gateway quando a integração estiver ativa.</span></div>
+      <div><b>Forma de venda</b><span>À vista ou parcelado. Se escolher parcelado, as condições serão negociadas diretamente entre você e o comprador, sem intermediação do ClassificaJá.</span></div>
       <div className="payment-choice-options">
         <label className={form.payment_mode==='cash'?'selected':''}><input type="radio" name="payment_mode" value="cash" checked={form.payment_mode==='cash'} onChange={change}/><span><b>À vista</b><small>Pagamento único</small></span></label>
-        <label className={form.payment_mode==='installments'?'selected':''}><input type="radio" name="payment_mode" value="installments" checked={form.payment_mode==='installments'} onChange={change}/><span><b>Parcelado</b><small>Parcelas definidas pelo banco</small></span></label>
+        <label className={form.payment_mode==='installments'?'selected':''}><input type="radio" name="payment_mode" value="installments" checked={form.payment_mode==='installments'} onChange={change}/><span><b>Parcelado</b><small>Negociação direta com o comprador</small></span></label>
       </div>
     </div>
     <div className="two-cols"><label>Condição<select name="condition" value={form.condition} onChange={change}><option>Novo</option><option>Seminovo</option><option>Usado</option></select></label><label>Status do anúncio<select name="status" value={form.status} onChange={change}><option value="active">Ativo</option><option value="paused">Pausado</option><option value="sold">Vendido</option></select></label></div>

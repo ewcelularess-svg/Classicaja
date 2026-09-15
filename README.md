@@ -1,60 +1,35 @@
-# ClassificaJá V2.2 — Render + Supabase
+# ClassificaJá V2.18.0
 
-Marketplace responsivo para notebook e celular, preparado para iniciar em hospedagem gratuita.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18 é uma versão de segurança e estabilidade construída sobre a V2.17.5, preservando o visual atual.
 
-## Arquitetura de produção
+## Stack
 
-- **Frontend:** React + Vite
-- **Backend:** FastAPI
-- **Banco:** PostgreSQL do Supabase
-- **Fotos:** Supabase Storage
-- **Hospedagem:** Render Web Service em Docker
-- **Modo local:** SQLite + pasta `backend/uploads`
+- Frontend: React 18 + Vite + React Router + Lucide
+- Backend: FastAPI + Python
+- Banco local: SQLite
+- Produção: PostgreSQL/Supabase
+- Imagens: Supabase Storage ou pasta local
+- Pagamentos: PIX PagBank
+- Login: e-mail/senha, Google e Facebook
 
-No Render, um Dockerfile multiestágio compila o React e inicia o FastAPI, que também serve o build do React. Isso permite publicar frontend e backend em **um único serviço**, usando a mesma URL e evitando configuração de CORS entre dois domínios.
+## Melhorias V2.18
 
-## Recursos presentes
+A versão corrige incompatibilidade SQLite/PostgreSQL no chat, impede uploads órfãos durante publicação inválida, valida/reprocessa imagens reais, adiciona logout com revogação de sessão, hash de tokens novos, recuperação de senha, confirmação de e-mail, rate limiting, validação real de CPF/CNPJ, fila de direitos de publicação para múltiplas compras, índices de banco, redução do N+1 do catálogo e deduplicação de visualizações.
 
-- Cadastro e login
-- Publicação, edição e exclusão de anúncios
-- Categorias, cidade e bairro
-- Fotos de produtos
-- Busca, filtros e ordenação
-- Favoritos
-- WhatsApp
-- Chat interno
-- Painel do vendedor e métricas
-- Denúncias e moderação
-- Vendedores verificados
-- Anúncios destacados
-- Fluxo de pagamento demonstrativo para PIX/cartão
-- Painel administrativo
-- Interface responsiva para celular, tablet e notebook
+## Executar localmente
 
-## Teste local rápido
-
-### Backend
-
-No Windows, abra a pasta `backend` e execute `iniciar_backend.bat`.
-
-Ou pelo terminal:
+Backend:
 
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
+# Windows: .venv\Scripts\activate
+# Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-API: http://localhost:8000
-Docs: http://localhost:8000/docs
-
-Sem `DATABASE_URL`, o projeto usa SQLite automaticamente.
-
-### Frontend
-
-Em outro terminal:
+Frontend, em outro terminal:
 
 ```bash
 cd frontend
@@ -62,12 +37,24 @@ npm install
 npm run dev
 ```
 
-Site: http://localhost:5173
+Frontend: `http://localhost:5173`  
+API/docs: `http://localhost:8000/docs`
 
-## Produção grátis
+## Produção
 
-Leia **DEPLOY_GRATIS_RENDER_SUPABASE.md**. O arquivo `render.yaml` já está pronto.
+O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. Use `render.yaml` como base e configure as variáveis descritas em `.env.example` / `VARIAVEIS_RENDER.txt`.
 
-## Segurança
+Variáveis particularmente importantes na V2.18:
 
-Nunca coloque `SUPABASE_SECRET_KEY`, senha do banco ou senha do administrador no frontend ou em um repositório público. Configure esses valores apenas nas variáveis secretas do Render.
+- `PAYMENT_CONFIG_KEY`: chave exclusiva para criptografar credenciais de pagamento novas.
+- `ACCOUNT_TOKEN_SECRET`: assinatura dos links de confirmação/redefinição.
+- `PUBLIC_BASE_URL` e `FRONTEND_URL`: domínio público.
+- `SMTP_*`: confirmação de e-mail e recuperação de senha.
+- `REQUIRE_EMAIL_VERIFICATION_FOR_FREE=true`: reduz abuso do plano grátis.
+- `RATE_LIMIT_ENABLED=true`: proteção básica contra automação abusiva.
+
+## Migração
+
+A inicialização continua compatível com bancos das versões anteriores. A V2.18 cria automaticamente novas tabelas/índices e migra o acesso de publicação legado para a fila de `publish_entitlements` sem apagar a tabela antiga.
+
+Leia também `LEIA-ME_V2_18.txt` e `MIGRACAO_V2_18.md`.

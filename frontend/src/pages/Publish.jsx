@@ -38,10 +38,10 @@ export default function Publish(){
   <label>Título do anúncio<input name="title" value={form.title} onChange={change} placeholder="Ex.: iPhone 15 128 GB" required/></label><label>Descrição<textarea name="description" value={form.description} onChange={change} rows="5" placeholder="Estado do produto, detalhes, acessórios..." required/></label>
   <div className="two-cols"><label>Preço (R$)<input name="price" value={form.price} onChange={change} type="number" min="0" step="0.01" required/></label><label>Preço anterior / promoção (opcional)<input name="original_price" value={form.original_price} onChange={change} type="number" min="0" step="0.01" placeholder="Ex.: 2500.00"/></label></div>
   <div className="payment-choice-box">
-    <div><b>Forma de venda</b><span>Escolha como o comprador poderá pagar. O banco/gateway definirá as parcelas reais quando a integração estiver ativa.</span></div>
+    <div><b>Forma de venda</b><span>Escolha como pretende negociar a venda com o comprador. O ClassificaJá não participa nem intermedeia o parcelamento entre comprador e vendedor.</span></div>
     <div className="payment-choice-options">
       <label className={form.payment_mode==='cash'?'selected':''}><input type="radio" name="payment_mode" value="cash" checked={form.payment_mode==='cash'} onChange={change}/><span><b>À vista</b><small>Pagamento único</small></span></label>
-      <label className={form.payment_mode==='installments'?'selected':''}><input type="radio" name="payment_mode" value="installments" checked={form.payment_mode==='installments'} onChange={change}/><span><b>Parcelado</b><small>Parcelas definidas pelo banco</small></span></label>
+      <label className={form.payment_mode==='installments'?'selected':''}><input type="radio" name="payment_mode" value="installments" checked={form.payment_mode==='installments'} onChange={change}/><span><b>Parcelado</b><small>Negociação direta com o comprador</small></span></label>
     </div>
   </div>
   <div className="two-cols"><label>Condição<select name="condition" value={form.condition} onChange={change}><option>Novo</option><option>Seminovo</option><option>Usado</option></select></label><div className="promo-hint-box"><Camera/><div><b>Dica:</b><span>Se o preço anterior for maior que o preço atual, o anúncio receberá o selo <b>Promoção</b>.</span></div></div></div>

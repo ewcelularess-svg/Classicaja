@@ -2,7 +2,7 @@ import React, {createContext, useContext, useEffect, useState} from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
-import {api, setToken, token} from './lib/api';
+import {api, apiBase, setToken, token} from './lib/api';
 import './styles.css';
 
 const AuthContext = createContext(null);
@@ -16,7 +16,7 @@ function AuthProvider({children}) {
     api('/api/me').then(setUser).catch(() => setToken(null)).finally(() => setLoading(false));
   }, []);
   const login = (data) => { setToken(data.token); setUser(data.user); };
-  const logout = () => { setToken(null); setUser(null); };
+  const logout = () => { const current=token(); if(current){ fetch(`${apiBase}/api/auth/logout`,{method:'POST',headers:{Authorization:`Bearer ${current}`}}).catch(()=>{}); } setToken(null); setUser(null); };
   const refreshUser = async () => { const fresh = await api('/api/me'); setUser(fresh); return fresh; };
   return <AuthContext.Provider value={{user, loading, login, logout, refreshUser}}>{children}</AuthContext.Provider>;
 }

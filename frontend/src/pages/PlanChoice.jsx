@@ -2,12 +2,14 @@ import React,{useEffect,useState} from 'react';
 import {Check, Copy, Crown, QrCode, Sparkles, X, Zap} from 'lucide-react';
 import {useNavigate} from 'react-router-dom';
 import {api} from '../lib/api';
+import {useAuth} from '../main';
 
 const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const tierClass=(index,total)=>index===0?'basic':index===total-1?'premium':'plus';
 
 export default function PlanChoice(){
   const nav=useNavigate();
+  const {user,refreshUser}=useAuth();
   const [plans,setPlans]=useState([]);
   const [access,setAccess]=useState(null);
   const [order,setOrder]=useState(null);
@@ -16,6 +18,7 @@ export default function PlanChoice(){
   const [busy,setBusy]=useState(false);
   const [err,setErr]=useState('');
   const [copied,setCopied]=useState(false);
+  const [verifyBusy,setVerifyBusy]=useState(false);
 
   useEffect(()=>{
     Promise.all([api('/api/plans'),api('/api/me/publish-plan')])
@@ -67,6 +70,16 @@ export default function PlanChoice(){
     }catch(e){setErr(e.message)}finally{setBusy(false)}
   }
 
+  async function resendVerification(){
+    if(!user?.email) return;
+    setErr('');setVerifyBusy(true);
+    try{
+      const result=await api('/api/auth/resend-verification',{method:'POST',body:JSON.stringify({email:user.email})});
+      setErr(result.message||'Se o e-mail estiver pendente, enviaremos um novo link.');
+      await refreshUser().catch(()=>{});
+    }catch(e){setErr(e.message)}finally{setVerifyBusy(false)}
+  }
+
   async function copyPix(){
     if(!order?.pix_code) return;
     await navigator.clipboard.writeText(order.pix_code);
@@ -89,6 +102,7 @@ export default function PlanChoice(){
     </div>
 
     {!order ? <>
+      {user && !user.email_verified&&<div className="email-verify-banner"><div><b>Confirme seu e-mail</b><span>O Plano Grátis é liberado somente após a confirmação do e-mail. Planos pagos continuam disponíveis normalmente.</span></div><button type="button" className="secondary-btn" onClick={resendVerification} disabled={verifyBusy}>{verifyBusy?'Enviando...':'Reenviar confirmação'}</button></div>}
       <div className="plan-choice-tax">
         <QrCode/>
         <div><b>CPF/CNPJ para planos pagos</b><span>Necessário apenas se escolher Plus ou Premium. No Grátis, nenhuma cobrança é criada.</span></div>

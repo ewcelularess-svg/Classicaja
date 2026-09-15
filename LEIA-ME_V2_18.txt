@@ -1,0 +1,36 @@
+CLASSIFICAJÁ V2.18.0 — SEGURANÇA E ESTABILIDADE
+
+Esta versão foi criada sobre a V2.17.5 preservando o layout e as funções existentes.
+
+PRINCIPAIS CORREÇÕES
+- Corrigido o SQL de ocultar conversa para funcionar em PostgreSQL/Supabase.
+- Publicação valida plano e categoria antes de gravar imagens.
+- Uploads agora verificam o conteúdo real de JPG/PNG/WEBP e reprocessam a imagem.
+- Novas sessões são armazenadas no banco como hash SHA-256.
+- Logout revoga a sessão no servidor.
+- Troca de senha encerra as outras sessões.
+- Recuperação de senha e confirmação de e-mail via SMTP.
+- Rate limiting básico em autenticação, pagamentos e endpoints sensíveis.
+- CPF/CNPJ com validação de dígitos verificadores.
+- Planos pagos viraram direitos de publicação independentes: uma compra não sobrescreve outra.
+- Plano grátis pode exigir e-mail confirmado em produção.
+- Catálogo otimizado para evitar consultas N+1 de vendedor/favoritos.
+- Índices adicionados para catálogo, chat, denúncias, pagamentos e planos.
+- Busca textual tornou-se consistente entre SQLite e PostgreSQL usando LOWER(...).
+- Visualizações de anúncio contam no máximo 1 acesso por visitante/produto/hora.
+- Telefone do vendedor não é mais enviado em massa no catálogo; continua no detalhe do anúncio.
+- PAYMENT_CONFIG_KEY passou a ser a chave dedicada para novas credenciais de pagamento.
+- Compatibilidade de leitura mantida para credenciais criptografadas por versões V2.17.x.
+- Metadados SEO básicos, robots.txt e sitemap.xml adicionados.
+- Versão unificada em 2.18.0 no backend e frontend.
+
+ANTES DO DEPLOY
+1. Preencha as variáveis em VARIAVEIS_RENDER.txt.
+2. Gere PAYMENT_CONFIG_KEY e ACCOUNT_TOKEN_SECRET longas e diferentes.
+3. Configure SMTP se quiser liberar confirmação de e-mail e recuperação de senha.
+4. Em produção mantenha SEED_DEMO_DATA=false.
+5. Use a URL do Session Pooler do Supabase em DATABASE_URL.
+
+OBSERVAÇÃO
+O arquivo styles.css foi preservado de propósito nesta versão para evitar regressão visual.
+A consolidação do CSS deve ser feita em uma versão visual separada, acompanhada de comparação de telas.

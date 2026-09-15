@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /painel
+Disallow: /mensagens
+Sitemap: https://www.classificaja.com.br/sitemap.xml
