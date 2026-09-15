@@ -76,7 +76,8 @@ export default function Header(){
     </span>}
   </>:null;
 
-  return <header className={`topbar premium-topbar ${isHome?'home-topbar home-topbar-slider':''} ${isProduct?'product-topbar':''}`}>
+  return <>
+  <header className={`topbar premium-topbar ${isHome?'home-topbar home-topbar-slider':''} ${isProduct?'product-topbar':''}`}>
     <div className={`topbar-inner premium-header-row ${isHome?'home-header-row':''}`}>
       <Link className="brand brand-premium" to="/" aria-label="ClassificaJá - Início">
         <img src="/logo-classificaja.png" alt="ClassificaJá" className="brand-logo"/>
@@ -147,10 +148,12 @@ export default function Header(){
       </div>
     </div>
 
-    {!hideFloatingPublish&&<Link
-      className="mobile-floating-publish"
-      to={user?'/escolher-plano':'/entrar'}
-      aria-label="Criar novo anúncio"
-    ><Plus/><span>Novo anúncio</span></Link>}
   </header>
+
+  {!hideFloatingPublish&&<Link
+    className="mobile-floating-publish"
+    to={user?'/escolher-plano':'/entrar'}
+    aria-label="Criar novo anúncio"
+  ><Plus/><span>Novo anúncio</span></Link>}
+  </>
 }
