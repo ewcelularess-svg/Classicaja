@@ -19,12 +19,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -60,6 +62,12 @@ SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes",
 REQUIRE_EMAIL_VERIFICATION_FOR_FREE = os.getenv("REQUIRE_EMAIL_VERIFICATION_FOR_FREE", "true" if USE_POSTGRES else "false").lower() in {"1", "true", "yes", "sim"}
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in {"1", "true", "yes", "sim"}
 TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "true" if USE_POSTGRES else "false").lower() in {"1", "true", "yes", "sim"}
+
+# V2.18.13 — Web Push. Chaves VAPID podem vir do ambiente, mas por padrão
+# são geradas uma única vez e guardadas (criptografadas quando possível) no banco.
+PUSH_VAPID_PRIVATE_KEY = (os.getenv("PUSH_VAPID_PRIVATE_KEY") or "").replace("\\n", "\n").strip()
+PUSH_VAPID_PUBLIC_KEY = (os.getenv("PUSH_VAPID_PUBLIC_KEY") or "").strip()
+PUSH_VAPID_SUBJECT = (os.getenv("PUSH_VAPID_SUBJECT") or (f"mailto:{os.getenv('ADMIN_EMAIL','').strip()}" if os.getenv('ADMIN_EMAIL','').strip() else "mailto:admin@classificaja.com.br")).strip()
 
 PAYMENT_PROVIDER_DEFS = {
     "mercadopago": {
@@ -167,7 +175,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.18.12")
+app = FastAPI(title="ClassificaJá API", version="2.18.13")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -191,6 +199,7 @@ _RATE_RULES = [
     ("POST", "/api/auth/resend-verification", 5, 900),
     ("POST", "/api/payments", 10, 60),
     ("POST", "/api/support-requests", 8, 3600),
+    ("POST", "/api/me/push-test", 5, 300),
     ("POST_PREFIX", "/api/products/", 80, 60),
     ("GET_PREFIX", "/api/products/", 180, 60),
     ("POST_PREFIX", "/api/conversations/", 60, 60),
@@ -426,6 +435,197 @@ def table_columns(db, table: str):
 def ensure_column(db, table: str, column: str, definition: str):
     if column not in table_columns(db, table):
         db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _push_fernet():
+    secret = PAYMENT_CONFIG_SECRET or ACCOUNT_TOKEN_SECRET
+    if not secret:
+        return None
+    raw = hashlib.sha256(("classificaja-push|" + secret).encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(raw))
+
+
+def _encrypt_push_secret(value: str) -> str:
+    f = _push_fernet()
+    if not f:
+        return "plain:" + value
+    return "enc:" + f.encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_push_secret(value: str | None) -> str:
+    raw = str(value or "")
+    if raw.startswith("plain:"):
+        return raw[6:]
+    if raw.startswith("enc:"):
+        f = _push_fernet()
+        if not f:
+            return ""
+        try:
+            return f.decrypt(raw[4:].encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            return ""
+    return raw
+
+
+def _vapid_key_object(private_value: str):
+    value = (private_value or "").strip()
+    if "BEGIN" in value:
+        return serialization.load_pem_private_key(value.encode("utf-8"), password=None)
+    padded = value + "=" * (-len(value) % 4)
+    raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+    if len(raw) != 32:
+        raise ValueError("Chave VAPID privada inválida")
+    return ec.derive_private_key(int.from_bytes(raw, "big"), ec.SECP256R1())
+
+
+def _canonical_vapid_private(private_value: str) -> str:
+    key = _vapid_key_object(private_value)
+    raw = key.private_numbers().private_value.to_bytes(32, "big")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _vapid_public_from_private(private_value: str) -> str:
+    key = _vapid_key_object(private_value)
+    numbers = key.public_key().public_numbers()
+    raw = b"\x04" + numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _generate_vapid_pair() -> tuple[str, str]:
+    key = ec.generate_private_key(ec.SECP256R1())
+    private_raw = key.private_numbers().private_value.to_bytes(32, "big")
+    private_value = base64.urlsafe_b64encode(private_raw).decode("ascii").rstrip("=")
+    return private_value, _vapid_public_from_private(private_value)
+
+
+def get_vapid_material() -> tuple[str, str]:
+    """Returns stable (private urlsafe-base64, public urlsafe-base64) VAPID material."""
+    if PUSH_VAPID_PRIVATE_KEY:
+        try:
+            private_value = _canonical_vapid_private(PUSH_VAPID_PRIVATE_KEY)
+            public = PUSH_VAPID_PUBLIC_KEY or _vapid_public_from_private(private_value)
+            return private_value, public
+        except Exception:
+            return "", ""
+    with conn() as db:
+        row = db.execute("SELECT value FROM app_settings WHERE key='push_vapid_private'").fetchone()
+        private_pem = _decrypt_push_secret(row["value"]) if row else ""
+        if private_pem:
+            try:
+                private_value = _canonical_vapid_private(private_pem)
+                if private_value != private_pem:
+                    db.execute(
+                        "UPDATE app_settings SET value=?,updated_at=? WHERE key='push_vapid_private'",
+                        (_encrypt_push_secret(private_value), now_iso()),
+                    )
+                    db.commit()
+                return private_value, _vapid_public_from_private(private_value)
+            except Exception:
+                private_pem = ""
+        private_value, public_key = _generate_vapid_pair()
+        db.execute(
+            "INSERT INTO app_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+            ("push_vapid_private", _encrypt_push_secret(private_value), now_iso()),
+        )
+        db.commit()
+        return private_value, public_key
+
+
+def _push_media_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    if str(url).startswith(("http://", "https://")):
+        return str(url)
+    return f"{PUBLIC_BASE_URL}{url}" if PUBLIC_BASE_URL else str(url)
+
+
+def _send_webpush(subscription: dict, payload: dict) -> tuple[bool, int | None]:
+    try:
+        from pywebpush import webpush, WebPushException
+    except Exception as exc:
+        print(f"[push] pywebpush indisponível: {exc}")
+        return False, None
+    private_key, _ = get_vapid_material()
+    if not private_key:
+        return False, None
+    try:
+        webpush(
+            subscription_info={
+                "endpoint": subscription["endpoint"],
+                "keys": {"p256dh": subscription["p256dh"], "auth": subscription["auth"]},
+            },
+            data=json.dumps(payload, ensure_ascii=False),
+            vapid_private_key=private_key,
+            vapid_claims={"sub": PUSH_VAPID_SUBJECT},
+            ttl=3600,
+        )
+        return True, None
+    except WebPushException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        print(f"[push] Falha HTTP {status or '-'}: {exc}")
+        return False, status
+    except Exception as exc:
+        print(f"[push] Falha: {exc}")
+        return False, None
+
+
+def send_new_product_push(product_id: str):
+    """Best-effort push delivery. Never blocks or rolls back product publication."""
+    try:
+        with conn() as db:
+            product = db.execute(
+                "SELECT id,seller_id,title,price,category_slug,city,state,image_url,featured FROM products WHERE id=? AND status='active'",
+                (product_id,),
+            ).fetchone()
+            if not product:
+                return
+            p = dict(product)
+            rows = db.execute(
+                """SELECT s.id subscription_id,s.user_id,s.endpoint,s.p256dh,s.auth,
+                          COALESCE(pref.enabled,0) pref_enabled,
+                          COALESCE(pref.city_only,1) city_only,
+                          COALESCE(pref.featured_only,0) featured_only,
+                          COALESCE(pref.category_slug,'') category_slug,
+                          COALESCE(u.city,'') user_city
+                   FROM push_subscriptions s
+                   JOIN users u ON u.id=s.user_id
+                   LEFT JOIN push_preferences pref ON pref.user_id=s.user_id
+                   WHERE s.active=1 AND u.status='active' AND s.user_id<>?""",
+                (p["seller_id"],),
+            ).fetchall()
+        price_text = f"R$ {float(p.get('price') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        body = f"{price_text} • {p.get('city') or ''} - {p.get('state') or ''}".strip(" •-")
+        payload = {
+            "title": "ClassificaJá • Novo anúncio",
+            "body": f"{p.get('title') or 'Novo anúncio'}\n{body}",
+            "url": f"/produto/{p['id']}",
+            "icon": "/logo-classificaja.png",
+            "badge": "/favicon.png",
+            "image": _push_media_url(p.get("image_url")),
+            "tag": f"new-product-{p['id']}",
+        }
+        stale_ids = []
+        for row in rows:
+            sub = dict(row)
+            if not bool(sub.get("pref_enabled")):
+                continue
+            if bool(sub.get("city_only")) and (sub.get("user_city") or "").strip().casefold() != (p.get("city") or "").strip().casefold():
+                continue
+            if bool(sub.get("featured_only")) and not bool(p.get("featured")):
+                continue
+            wanted_category = (sub.get("category_slug") or "").strip()
+            if wanted_category and wanted_category != (p.get("category_slug") or ""):
+                continue
+            ok, status = _send_webpush(sub, payload)
+            if not ok and status in {404, 410}:
+                stale_ids.append(sub["subscription_id"])
+        if stale_ids:
+            with conn() as db:
+                for sid in stale_ids:
+                    db.execute("UPDATE push_subscriptions SET active=0,updated_at=? WHERE id=?", (now_iso(), sid))
+                db.commit()
+    except Exception as exc:
+        print(f"[push] Falha no envio do anúncio {product_id}: {exc}")
 
 
 def ensure_supabase_bucket():
@@ -692,6 +892,32 @@ def init_db():
               FOREIGN KEY(notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
               FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS push_preferences (
+              user_id TEXT PRIMARY KEY,
+              enabled INTEGER NOT NULL DEFAULT 0,
+              city_only INTEGER NOT NULL DEFAULT 1,
+              featured_only INTEGER NOT NULL DEFAULT 0,
+              category_slug TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              endpoint TEXT UNIQUE NOT NULL,
+              p256dh TEXT NOT NULL,
+              auth TEXT NOT NULL,
+              user_agent TEXT,
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS plan_settings (
               code TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -930,6 +1156,8 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_conversations_buyer_updated ON conversations(buyer_id, updated_at)",
             "CREATE INDEX IF NOT EXISTS idx_conversations_seller_updated ON conversations(seller_id, updated_at)",
             "CREATE INDEX IF NOT EXISTS idx_notifications_target_created ON notifications(target_user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_active ON push_subscriptions(user_id, active)",
+            "CREATE INDEX IF NOT EXISTS idx_push_preferences_enabled ON push_preferences(enabled)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_support_requests_status_created ON support_requests(status, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_support_requests_category_created ON support_requests(category, created_at)",
@@ -1176,6 +1404,23 @@ class SupportRequestIn(BaseModel):
     email: str = ""
     subject: str
     message: str
+
+
+class PushSubscriptionIn(BaseModel):
+    endpoint: str = Field(min_length=20, max_length=4096)
+    p256dh: str = Field(min_length=20, max_length=1024)
+    auth: str = Field(min_length=5, max_length=512)
+
+
+class PushUnsubscribeIn(BaseModel):
+    endpoint: str = Field(min_length=20, max_length=4096)
+
+
+class PushPreferencesIn(BaseModel):
+    enabled: bool = False
+    city_only: bool = True
+    featured_only: bool = False
+    category_slug: str = Field(default="", max_length=80)
 
 
 class PaymentIn(BaseModel):
@@ -2067,7 +2312,7 @@ def products_to_dicts(db, rows, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.18.12", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.13", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -2665,6 +2910,7 @@ def related_products(product_id: str, limit: int = 4, user=Depends(optional_user
 
 @app.post("/api/products")
 async def create_product(
+    background_tasks: BackgroundTasks,
     title: str = Form(...), description: str = Form(...), price: float = Form(...), category_slug: str = Form(...),
     city: str = Form(...), state: str = Form(...), neighborhood: str = Form(""), condition: str = Form("Usado"),
     original_price: float | None = Form(default=None), payment_mode: str = Form("cash"),
@@ -2802,6 +3048,7 @@ async def create_product(
                 (str(uuid.uuid4()), "new_product", pid, "Novo anúncio publicado", f"{title} • {city} - {state}", created_at),
             )
             db.commit()
+        background_tasks.add_task(send_new_product_push, pid)
         return {"id": pid, "plan_code": selected_plan.get("code")}
     except Exception:
         delete_product_images(gallery_urls)
@@ -3091,6 +3338,114 @@ def my_dashboard(user=Depends(current_user)):
             "expiring_soon_count": sum(1 for item in featured_ads if item.get("expiring_soon")),
         },
     }
+
+
+@app.get("/api/push/config")
+def push_config():
+    try:
+        _, public_key = get_vapid_material()
+    except Exception as exc:
+        print(f"[push] Não foi possível preparar VAPID: {exc}")
+        public_key = ""
+    return {"enabled": bool(public_key), "public_key": public_key}
+
+
+@app.get("/api/me/push-preferences")
+def my_push_preferences(user=Depends(current_user)):
+    with conn() as db:
+        row = db.execute("SELECT * FROM push_preferences WHERE user_id=?", (user["id"],)).fetchone()
+        active_subscriptions = db.execute(
+            "SELECT COUNT(*) n FROM push_subscriptions WHERE user_id=? AND active=1", (user["id"],)
+        ).fetchone()["n"]
+    data = dict(row) if row else {
+        "user_id": user["id"], "enabled": 0, "city_only": 1, "featured_only": 0, "category_slug": "", "updated_at": None,
+    }
+    return {
+        "enabled": bool(data.get("enabled")),
+        "city_only": bool(data.get("city_only")),
+        "featured_only": bool(data.get("featured_only")),
+        "category_slug": data.get("category_slug") or "",
+        "active_subscriptions": int(active_subscriptions or 0),
+        "city": user.get("city") or "",
+    }
+
+
+@app.put("/api/me/push-preferences")
+def update_push_preferences(payload: PushPreferencesIn, user=Depends(current_user)):
+    category_slug = (payload.category_slug or "").strip().lower()
+    with conn() as db:
+        if category_slug and not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
+            raise HTTPException(400, "Categoria inválida")
+        now = now_iso()
+        db.execute(
+            """INSERT INTO push_preferences(user_id,enabled,city_only,featured_only,category_slug,updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,city_only=excluded.city_only,
+                 featured_only=excluded.featured_only,category_slug=excluded.category_slug,updated_at=excluded.updated_at""",
+            (user["id"], 1 if payload.enabled else 0, 1 if payload.city_only else 0, 1 if payload.featured_only else 0, category_slug, now),
+        )
+        db.commit()
+    return {"ok": True, "enabled": payload.enabled, "city_only": payload.city_only, "featured_only": payload.featured_only, "category_slug": category_slug}
+
+
+@app.post("/api/me/push-subscriptions")
+def save_push_subscription(payload: PushSubscriptionIn, request: Request, user=Depends(current_user)):
+    now = now_iso()
+    ua = (request.headers.get("user-agent") or "")[:500]
+    with conn() as db:
+        db.execute(
+            """INSERT INTO push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,active,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth,
+                 user_agent=excluded.user_agent,active=1,updated_at=excluded.updated_at""",
+            (str(uuid.uuid4()), user["id"], payload.endpoint, payload.p256dh, payload.auth, ua, 1, now, now),
+        )
+        db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/me/push-subscriptions")
+def remove_push_subscription(payload: PushUnsubscribeIn, user=Depends(current_user)):
+    with conn() as db:
+        db.execute("DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?", (user["id"], payload.endpoint))
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/me/push-test")
+def send_push_test(user=Depends(current_user)):
+    with conn() as db:
+        subscriptions = db.execute(
+            "SELECT id,endpoint,p256dh,auth FROM push_subscriptions WHERE user_id=? AND active=1",
+            (user["id"],),
+        ).fetchall()
+    if not subscriptions:
+        raise HTTPException(409, "Ative as notificações neste aparelho antes de enviar um teste")
+    payload = {
+        "title": "ClassificaJá • Notificações ativadas",
+        "body": "Tudo certo. Você receberá novos anúncios conforme suas preferências.",
+        "url": "/painel?tab=notifications",
+        "icon": "/logo-classificaja.png",
+        "badge": "/favicon.png",
+        "tag": "classificaja-push-test",
+    }
+    delivered = 0
+    stale_ids = []
+    for row in subscriptions:
+        sub = dict(row)
+        ok, status = _send_webpush(sub, payload)
+        if ok:
+            delivered += 1
+        elif status in {404, 410}:
+            stale_ids.append(sub["id"])
+    if stale_ids:
+        with conn() as db:
+            for sid in stale_ids:
+                db.execute("UPDATE push_subscriptions SET active=0,updated_at=? WHERE id=?", (now_iso(), sid))
+            db.commit()
+    if delivered == 0:
+        raise HTTPException(502, "Não foi possível entregar a notificação de teste neste aparelho")
+    return {"ok": True, "delivered": delivered}
 
 
 @app.get("/api/me/notifications")

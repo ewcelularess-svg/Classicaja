@@ -1,0 +1,5 @@
+V2.18.13 — Railway
+
+Nenhuma nova variável obrigatória.
+O backend passa a instalar pywebpush e cria automaticamente as tabelas/chaves necessárias para Web Push.
+Opcional: PUSH_VAPID_PRIVATE_KEY, PUSH_VAPID_PUBLIC_KEY e PUSH_VAPID_SUBJECT.

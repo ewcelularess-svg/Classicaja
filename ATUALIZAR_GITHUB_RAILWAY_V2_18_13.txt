@@ -1,0 +1,7 @@
+CLASSIFICAJÁ V2.18.13
+
+Substitua no GitHub os arquivos do pacote mantendo a mesma estrutura de pastas.
+Não envie o ZIP fechado para dentro do repositório.
+O Railway conectado à branch main deve iniciar o deploy automaticamente.
+Depois confirme: https://www.classificaja.com.br/api/health
+Versão esperada: 2.18.13

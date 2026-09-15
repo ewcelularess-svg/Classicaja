@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.12
+# ClassificaJá V2.18.13
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.12 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.13 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
 
 ## Fluxo direto de publicação — V2.18.9
 
@@ -59,13 +59,13 @@ API/docs: `http://localhost:8000/docs`
 
 ## Produção — GitHub + Railway
 
-O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para a V2.18.12.
+O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para a V2.18.13.
 
 Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.12"`.
+A resposta deve indicar `"version":"2.18.13"`.
 
 ## Migração automática
 
@@ -107,7 +107,7 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - O bloco recebeu acabamento premium: moldura suave, faixa de destaque, selo, sombra, CTA e navegação refinados.
 
 
-## Rodapé e Central de Atendimento — V2.18.12
+## Rodapé e Central de Atendimento — V2.18.13
 
 - Rodapé profissional com atalhos para **Reclamações**, **Suporte** e **Sugestão**.
 - Cada opção abre uma central de atendimento com formulário próprio.
@@ -117,7 +117,7 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - Botão flutuante de **voltar ao topo** aparece após a rolagem e respeita a navegação fixa do mobile.
 
 
-## Painel Master interativo — V2.18.12
+## Painel Master interativo — V2.18.13
 
 Os cards principais da Visão geral agora funcionam como atalhos reais:
 
@@ -132,7 +132,7 @@ Os cards principais da Visão geral agora funcionam como atalhos reais:
 Os cards receberam estados de hover/foco e indicação visual de ação. Não há nova variável de ambiente para esta atualização.
 
 
-## Painel do usuário interativo — V2.18.12
+## Painel do usuário interativo — V2.18.13
 
 Os blocos de métricas da visão geral também são atalhos funcionais:
 
@@ -144,6 +144,33 @@ Os blocos de métricas da visão geral também são atalhos funcionais:
 
 A tela **Meus anúncios** passou a exibir visualizações e favoritos recebidos por anúncio e entende os filtros/ordenações vindos do painel.
 
-## Hotfix do Painel Master — V2.18.12
+## Hotfix do Painel Master — V2.18.13
 
-A V2.18.12 corrige a tela branca em `/admin` causada por ordem inconsistente de hooks React durante o carregamento. Os cards funcionais e rankings da V2.18.11 foram preservados. Não há nova variável de ambiente nem alteração de banco nesta hotfix.
+A V2.18.13 corrige a tela branca em `/admin` causada por ordem inconsistente de hooks React durante o carregamento. Os cards funcionais e rankings da V2.18.11 foram preservados. Não há nova variável de ambiente nem alteração de banco nesta hotfix.
+
+## Notificações Push — V2.18.13
+
+A V2.18.13 adiciona notificações push reais no navegador, com Service Worker e Web Push/VAPID.
+
+No **Painel do usuário → Notificações**, cada pessoa pode:
+
+- ativar ou desativar os alertas;
+- receber apenas anúncios da própria cidade;
+- escolher uma categoria preferida ou todas;
+- receber apenas anúncios em destaque;
+- enviar uma notificação de teste para o aparelho.
+
+Quando um novo anúncio é publicado, o backend envia push apenas para usuários com a opção ativa e cujos filtros correspondem ao anúncio. O próprio anunciante nunca recebe alerta do próprio anúncio.
+
+As inscrições do navegador ficam vinculadas à conta e armazenadas no banco. Inscrições expiradas (HTTP 404/410 do serviço push) são desativadas automaticamente.
+
+### Chaves VAPID
+
+Por padrão **não é necessário criar novas variáveis no Railway**. Na primeira utilização, o backend gera uma chave VAPID P-256 uma única vez e guarda a chave privada de forma persistente no banco (criptografada quando `PAYMENT_CONFIG_KEY` ou `ACCOUNT_TOKEN_SECRET` está disponível).
+
+Opcionalmente, instalações que desejarem controlar suas próprias chaves podem definir `PUSH_VAPID_PRIVATE_KEY`, `PUSH_VAPID_PUBLIC_KEY` e `PUSH_VAPID_SUBJECT`.
+
+### Compatibilidade
+
+Produção deve usar HTTPS. Chrome/Edge no Android oferecem o fluxo principal. O formato visual final da notificação é controlado pelo sistema operacional/navegador.
+

@@ -1,0 +1,10 @@
+CLASSIFICAJÁ V2.18.13 — NOTIFICAÇÕES PUSH
+
+1. Suba os arquivos desta versão para a branch main do GitHub.
+2. Aguarde o Railway concluir o deploy.
+3. Confirme /api/health = 2.18.13.
+4. Acesse Painel > Notificações.
+5. Toque Ativar, permita no navegador e use Enviar teste.
+
+Não é necessário adicionar variável nova no Railway.
+O sistema gera e persiste automaticamente as chaves VAPID.

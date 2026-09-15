@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {AlertTriangle, ArrowUpCircle, BadgeCheck, Camera, Check, ChevronRight, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, LogOut, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
+import {AlertTriangle, ArrowUpCircle, BadgeCheck, BellRing, Camera, Check, ChevronRight, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, LogOut, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
 import {Link, useLocation, useNavigate} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
 import {useAuth} from '../main';
@@ -32,11 +32,18 @@ const verificationMeta=(status)=>({
   unverified:{label:'Não verificado',tone:'unverified'}
 }[status]||{label:'Não verificado',tone:'unverified'});
 
+const urlBase64ToUint8Array=(value)=>{
+ const padding='='.repeat((4-value.length%4)%4);
+ const base64=(value+padding).replace(/-/g,'+').replace(/_/g,'/');
+ const raw=window.atob(base64);
+ return Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
+};
+
 export default function Dashboard(){
  const {refreshUser,logout}=useAuth();
  const nav=useNavigate();
  const location=useLocation();
- const [activeTab,setActiveTab]=useState(()=>new URLSearchParams(window.location.search).get('tab')==='profile'?'profile':'overview');
+ const [activeTab,setActiveTab]=useState(()=>{const tab=new URLSearchParams(window.location.search).get('tab');return ['overview','profile','plan','partner','payments','notifications'].includes(tab)?tab:'overview'});
  const [profile,setProfile]=useState(null);
  const [profileForm,setProfileForm]=useState({name:'',phone:'',address_line:'',neighborhood:'',city:'',state:'',postal_code:'',current_password:''});
  const [profileBusy,setProfileBusy]=useState(false);
@@ -57,6 +64,12 @@ export default function Dashboard(){
  const [partnerFile,setPartnerFile]=useState(null);
  const [partnerPreview,setPartnerPreview]=useState('');
  const [partnerBusy,setPartnerBusy]=useState(false);
+ const [pushPrefs,setPushPrefs]=useState({enabled:false,city_only:true,featured_only:false,category_slug:'',active_subscriptions:0,city:''});
+ const [pushConfig,setPushConfig]=useState({enabled:false,public_key:''});
+ const [pushCategories,setPushCategories]=useState([]);
+ const [pushBusy,setPushBusy]=useState(false);
+ const [pushSupported,setPushSupported]=useState(false);
+ const [pushPermission,setPushPermission]=useState('default');
 
  const load=()=>Promise.all([api('/api/me/dashboard'),api('/api/plans'),api('/api/me/payments'),api('/api/me/partner-benefit'),api('/api/me')])
   .then(([dashboard, planList, history, partnerData, me])=>{
@@ -82,6 +95,20 @@ export default function Dashboard(){
    },5000);
    return()=>clearInterval(timer);
  },[renewOrder?.id,renewOrder?.status]);
+ useEffect(()=>{
+   const supported=typeof window!=='undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+   setPushSupported(supported);
+   setPushPermission(supported?window.Notification.permission:'unsupported');
+   Promise.all([
+     api('/api/me/push-preferences').catch(()=>null),
+     api('/api/push/config').catch(()=>({enabled:false,public_key:''})),
+     api('/api/categories').catch(()=>[])
+   ]).then(([prefs,config,categories])=>{
+     if(prefs)setPushPrefs(prefs);
+     setPushConfig(config||{enabled:false,public_key:''});
+     setPushCategories(categories||[]);
+   });
+ },[]);
 
  if(err) return <div className="page"><div className="empty"><h3>{err}</h3></div></div>;
  if(!s) return <div className="loading">Carregando painel...</div>;
@@ -221,6 +248,52 @@ export default function Dashboard(){
    }catch(e){alert(e.message)}finally{setPasswordBusy(false)}
  };
 
+ const persistPushPrefs=async(next)=>{
+   const clean={enabled:Boolean(next.enabled),city_only:Boolean(next.city_only),featured_only:Boolean(next.featured_only),category_slug:next.category_slug||''};
+   await api('/api/me/push-preferences',{method:'PUT',body:JSON.stringify(clean)});
+   setPushPrefs(prev=>({...prev,...clean}));
+   return clean;
+ };
+
+ const enablePush=async()=>{
+   if(!pushSupported){alert('Este navegador não oferece suporte a notificações push. Use Chrome/Edge no Android ou um navegador compatível.');return}
+   if(!pushConfig?.enabled || !pushConfig?.public_key){alert('O serviço de notificações ainda não está disponível. Atualize a página e tente novamente.');return}
+   setPushBusy(true);
+   try{
+     const permission=await window.Notification.requestPermission();
+     setPushPermission(permission);
+     if(permission!=='granted'){alert('Permissão de notificações não concedida. Você pode liberar depois nas configurações do navegador.');return}
+     const registration=await navigator.serviceWorker.register('/push-sw.js',{scope:'/'});
+     await navigator.serviceWorker.ready;
+     let subscription=await registration.pushManager.getSubscription();
+     if(!subscription){
+       subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(pushConfig.public_key)});
+     }
+     const json=subscription.toJSON();
+     if(!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) throw new Error('O navegador não retornou uma inscrição push válida.');
+     await api('/api/me/push-subscriptions',{method:'POST',body:JSON.stringify({endpoint:json.endpoint,p256dh:json.keys.p256dh,auth:json.keys.auth})});
+     const cityOnly=Boolean(pushPrefs.city_only && pushPrefs.city);
+     await persistPushPrefs({...pushPrefs,enabled:true,city_only:cityOnly});
+     setPushPrefs(prev=>({...prev,enabled:true,city_only:cityOnly,active_subscriptions:Math.max(1,Number(prev.active_subscriptions||0))}));
+   }catch(e){alert(e.message||'Não foi possível ativar as notificações.')}finally{setPushBusy(false)}
+ };
+
+ const disablePush=async()=>{
+   setPushBusy(true);
+   try{await persistPushPrefs({...pushPrefs,enabled:false})}catch(e){alert(e.message)}finally{setPushBusy(false)}
+ };
+
+ const updatePushOption=async(patch)=>{
+   const next={...pushPrefs,...patch};
+   setPushPrefs(next);
+   try{await persistPushPrefs(next)}catch(e){alert(e.message)}
+ };
+
+ const testPush=async()=>{
+   setPushBusy(true);
+   try{await api('/api/me/push-test',{method:'POST'});alert('Notificação de teste enviada. Confira a barra de notificações do aparelho.')}catch(e){alert(e.message)}finally{setPushBusy(false)}
+ };
+
  return <div className="page user-dashboard-v2165">
   <section className="user-panel-profile-summary">
     <div className="user-panel-avatar-wrap">
@@ -234,6 +307,7 @@ export default function Dashboard(){
   <nav className="user-panel-tabs" aria-label="Seções do painel">
     <button className={activeTab==='overview'?'active':''} onClick={()=>setActiveTab('overview')}><LayoutDashboard/>Visão geral</button>
     <button className={activeTab==='profile'?'active':''} onClick={()=>setActiveTab('profile')}><UserRound/>Perfil e segurança</button>
+    <button className={activeTab==='notifications'?'active':''} onClick={()=>setActiveTab('notifications')}><BellRing/>Notificações</button>
     <Link to="/meus-anuncios"><PackageOpen/>Meus anúncios</Link>
     <button className={activeTab==='plan'?'active':''} onClick={()=>setActiveTab('plan')}><Crown/>Plano</button>
     <button className={activeTab==='partner'?'active':''} onClick={()=>setActiveTab('partner')}><Handshake/>Parceria</button>
@@ -242,9 +316,58 @@ export default function Dashboard(){
 
   {activeTab==='overview'&&<>
     <div className="metric-grid compact-dashboard-metrics">{cards.map(card=><Link className="metric-card metric-card-link user-metric-link" key={card.label} to={card.to} aria-label={`${card.hint}: ${card.label}`}><span className="metric-icon">{card.icon}</span><div className="metric-card-copy"><b>{card.value}</b><small>{card.label}</small><em>{card.hint}<ChevronRight/></em></div></Link>)}</div>
+    <button type="button" className={`dashboard-push-cta ${pushPrefs.enabled?'active':''}`} onClick={()=>setActiveTab('notifications')}>
+      <span className="dashboard-push-cta-icon"><BellRing/></span><span><b>{pushPrefs.enabled?'Notificações de novos anúncios ativas':'Receba novos anúncios no celular'}</b><small>{pushPrefs.enabled?'Toque para ajustar cidade, categoria ou destaques.':'Ative alertas push e escolha o que deseja receber.'}</small></span><ChevronRight/>
+    </button>
     <div className="dashboard-actions compact-dashboard-actions"><Link to="/meus-anuncios"><b>Gerenciar anúncios</b><span>Editar, pausar ou destacar.</span></Link><Link to="/mensagens"><b>Abrir mensagens</b><span>Conversas com compradores.</span></Link><Link to="/favoritos"><b>Ver favoritos</b><span>Produtos que você salvou.</span></Link></div>
     {expiringAds.length>0 && <div className="plan-expiry-alert"><AlertTriangle/><div><b>{expiringAds.length===1?'Seu plano está perto de vencer':'Você tem planos perto de vencer'}</b><span>{expiringAds.map(item=>`${item.title} (${item.days_left ?? 0} dia${item.days_left===1?'':'s'})`).join(' • ')}</span></div></div>}
   </>}
+
+  {activeTab==='notifications'&&<section className="push-settings-section">
+    <div className="push-feature-card">
+      <div className="push-feature-glow"></div>
+      <div className="push-feature-icon"><BellRing/></div>
+      <div className="push-feature-copy">
+        <span className="push-feature-kicker">ALERTAS EM TEMPO REAL</span>
+        <h2>Novos anúncios no seu celular</h2>
+        <p>Receba uma notificação destacada quando um novo anúncio que combina com suas preferências for publicado.</p>
+        <div className="push-status-row">
+          <span className={`push-status-pill ${pushPrefs.enabled?'on':'off'}`}>{pushPrefs.enabled?'● Ativado':'● Desativado'}</span>
+          <span>{pushPermission==='granted'?'Permissão do navegador liberada':pushPermission==='denied'?'Permissão bloqueada no navegador':'Aguardando sua autorização'}</span>
+        </div>
+      </div>
+      <button type="button" className={`push-master-toggle ${pushPrefs.enabled?'on':''}`} disabled={pushBusy} onClick={pushPrefs.enabled?disablePush:enablePush} aria-pressed={pushPrefs.enabled}>
+        <span></span><b>{pushBusy?'Aguarde':pushPrefs.enabled?'Ativadas':'Ativar'}</b>
+      </button>
+    </div>
+
+    {!pushSupported&&<div className="push-browser-warning"><AlertTriangle/><div><b>Navegador sem suporte</b><span>Abra o ClassificaJá pelo Chrome ou Edge atualizado para receber notificações push.</span></div></div>}
+    {pushPermission==='denied'&&<div className="push-browser-warning danger"><AlertTriangle/><div><b>Notificações bloqueadas</b><span>Libere as notificações para classificaja.com.br nas configurações do navegador e depois toque em Ativar.</span></div></div>}
+
+    <div className="push-preference-grid">
+      <div className="push-preference-card">
+        <div><MapPin/><span><b>Somente minha cidade</b><small>{pushPrefs.city?`Receber anúncios de ${pushPrefs.city}.`:'Cadastre sua cidade no perfil para usar este filtro.'}</small></span></div>
+        <button type="button" className={`mini-switch ${pushPrefs.city_only?'on':''}`} disabled={!pushPrefs.city} onClick={()=>updatePushOption({city_only:!pushPrefs.city_only})}><span></span></button>
+      </div>
+      <div className="push-preference-card">
+        <div><Sparkles/><span><b>Somente destaques</b><small>Avise apenas quando o anúncio estiver em destaque.</small></span></div>
+        <button type="button" className={`mini-switch ${pushPrefs.featured_only?'on':''}`} onClick={()=>updatePushOption({featured_only:!pushPrefs.featured_only})}><span></span></button>
+      </div>
+      <label className="push-category-card">
+        <div><PackageOpen/><span><b>Categoria preferida</b><small>Escolha uma categoria ou receba de todas.</small></span></div>
+        <select value={pushPrefs.category_slug||''} onChange={e=>updatePushOption({category_slug:e.target.value})}>
+          <option value="">Todas as categorias</option>
+          {pushCategories.map(cat=><option key={cat.slug} value={cat.slug}>{cat.icon} {cat.name}</option>)}
+        </select>
+      </label>
+    </div>
+
+    <div className="push-test-card">
+      <div><BellRing/><span><b>Teste no aparelho</b><small>Envia uma notificação agora para confirmar que está funcionando.</small></span></div>
+      <button type="button" className="secondary-btn" disabled={pushBusy||!pushPrefs.enabled} onClick={testPush}>Enviar teste</button>
+    </div>
+    <p className="push-privacy-note">Você só recebe notificações depois de ativar. O ClassificaJá não envia o seu próprio anúncio para você e você pode desativar a qualquer momento.</p>
+  </section>}
 
   {activeTab==='profile'&&<section className="profile-security-section">
     <div className="profile-security-grid">
