@@ -1,7 +1,8 @@
 import React,{useEffect,useState} from 'react';
-import {AlertTriangle, ArrowUpCircle, Check, Clock3, Copy, Crown, Eye, Heart, History, ImagePlus, Link2, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, Sparkles, Trash2, Handshake, XCircle} from 'lucide-react';
+import {AlertTriangle, ArrowUpCircle, BadgeCheck, Camera, Check, Clock3, Copy, CreditCard, Crown, Eye, Heart, History, ImagePlus, LayoutDashboard, Link2, LockKeyhole, MapPin, MessageCircle, PackageCheck, PackageOpen, PlusCircle, QrCode, RefreshCw, ShieldCheck, Sparkles, Trash2, Handshake, UserRound, XCircle} from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
+import {useAuth} from '../main';
 
 const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const planTone=(code)=>code==='boost_7'?'basic':code==='boost_15'?'plus':'premium';
@@ -12,6 +13,15 @@ const formatDate=(value)=>{
 const statusLabel=(status)=>({paid:'Pago',pending:'Pendente',cancelled:'Cancelado',failed:'Falhou'}[status]||status);
 
 export default function Dashboard(){
+ const {refreshUser}=useAuth();
+ const [activeTab,setActiveTab]=useState('overview');
+ const [profile,setProfile]=useState(null);
+ const [profileForm,setProfileForm]=useState({name:'',phone:'',address_line:'',neighborhood:'',city:'',state:'',postal_code:'',current_password:''});
+ const [profileBusy,setProfileBusy]=useState(false);
+ const [profilePhoto,setProfilePhoto]=useState(null);
+ const [profilePhotoPreview,setProfilePhotoPreview]=useState('');
+ const [passwordForm,setPasswordForm]=useState({current_password:'',new_password:'',confirm_password:''});
+ const [passwordBusy,setPasswordBusy]=useState(false);
  const [s,setS]=useState(null);
  const [plans,setPlans]=useState([]);
  const [payments,setPayments]=useState([]);
@@ -26,8 +36,11 @@ export default function Dashboard(){
  const [partnerPreview,setPartnerPreview]=useState('');
  const [partnerBusy,setPartnerBusy]=useState(false);
 
- const load=()=>Promise.all([api('/api/me/dashboard'),api('/api/plans'),api('/api/me/payments'),api('/api/me/partner-benefit')])
-  .then(([dashboard, planList, history, partnerData])=>{setS(dashboard);setPlans(planList);setPayments(history||[]);setPartner(partnerData)})
+ const load=()=>Promise.all([api('/api/me/dashboard'),api('/api/plans'),api('/api/me/payments'),api('/api/me/partner-benefit'),api('/api/me')])
+  .then(([dashboard, planList, history, partnerData, me])=>{
+    setS(dashboard);setPlans(planList);setPayments(history||[]);setPartner(partnerData);setProfile(me);
+    setProfileForm({name:me.name||'',phone:me.phone||'',address_line:me.address_line||'',neighborhood:me.neighborhood||'',city:me.city||'',state:me.state||'',postal_code:me.postal_code||'',current_password:''});
+  })
   .catch(e=>setErr(e.message));
  useEffect(()=>{load()},[]);
  useEffect(()=>{
@@ -116,19 +129,114 @@ export default function Dashboard(){
    try{await api(`/api/me/partner-ads/${id}`,{method:'DELETE'});await load()}catch(e){alert(e.message)}
  };
 
- return <div className="page"><div className="section-head"><div><span className="section-kicker">ÁREA DO VENDEDOR</span><h1>Visão geral</h1></div><Link className="primary small" to="/publicar"><PlusCircle/> Novo anúncio</Link></div>
-  <div className="metric-grid">{cards.map(([label,value,icon])=><div className="metric-card" key={label}><span className="metric-icon">{icon}</span><div><b>{value}</b><small>{label}</small></div></div>)}</div>
-  <div className="dashboard-actions"><Link to="/meus-anuncios"><b>Gerenciar anúncios</b><span>Edite status, exclua ou coloque em destaque.</span></Link><Link to="/mensagens"><b>Abrir mensagens</b><span>Converse com compradores e vendedores.</span></Link><Link to="/favoritos"><b>Ver favoritos</b><span>Acesse os produtos que você salvou.</span></Link></div>
+ const profileStatusLabel=profile?.verified?'Verificado':profile?.profile_review_status==='pending'?'Aguardando verificação':'Não verificado';
+ const profileStatusClass=profile?.verified?'verified':profile?.profile_review_status==='pending'?'pending':'unverified';
 
-  {expiringAds.length>0 && <div className="plan-expiry-alert">
-    <AlertTriangle/>
-    <div>
-      <b>{expiringAds.length===1?'Seu plano está perto de vencer':'Você tem planos perto de vencer'}</b>
-      <span>{expiringAds.map(item=>`${item.title} (${item.days_left ?? 0} dia${item.days_left===1?'':'s'})`).join(' • ')}</span>
+ const saveProfile=async(e)=>{
+   e.preventDefault();
+   if(!profileForm.current_password){alert('Digite sua senha atual para confirmar as alterações.');return}
+   setProfileBusy(true);
+   try{
+     const result=await api('/api/me/profile',{method:'PUT',body:JSON.stringify(profileForm)});
+     setProfile(result.user);
+     setProfileForm(f=>({...f,current_password:''}));
+     await refreshUser?.();
+     alert(result.message||'Dados enviados para verificação.');
+   }catch(e){alert(e.message)}finally{setProfileBusy(false)}
+ };
+
+ const chooseProfilePhoto=(e)=>{
+   const file=e.target.files?.[0]||null;
+   setProfilePhoto(file);
+   setProfilePhotoPreview(file?URL.createObjectURL(file):'');
+ };
+
+ const uploadProfilePhoto=async()=>{
+   if(!profilePhoto){alert('Selecione uma foto.');return}
+   const password=prompt('Digite sua senha atual para confirmar a troca da foto:')||'';
+   if(!password)return;
+   setProfileBusy(true);
+   try{
+     const fd=new FormData();fd.append('current_password',password);fd.append('image',profilePhoto);
+     const result=await api('/api/me/avatar',{method:'POST',body:fd});
+     setProfile(result.user);setProfilePhoto(null);setProfilePhotoPreview('');await refreshUser?.();
+     alert(result.message||'Foto enviada para verificação.');
+   }catch(e){alert(e.message)}finally{setProfileBusy(false)}
+ };
+
+ const changePassword=async(e)=>{
+   e.preventDefault();
+   if(passwordForm.new_password!==passwordForm.confirm_password){alert('A confirmação da nova senha não confere.');return}
+   setPasswordBusy(true);
+   try{
+     const result=await api('/api/me/password',{method:'PUT',body:JSON.stringify({current_password:passwordForm.current_password,new_password:passwordForm.new_password})});
+     setPasswordForm({current_password:'',new_password:'',confirm_password:''});
+     alert(result.message||'Senha alterada.');
+   }catch(e){alert(e.message)}finally{setPasswordBusy(false)}
+ };
+
+ return <div className="page user-dashboard-v2165">
+  <section className="user-panel-profile-summary">
+    <div className="user-panel-avatar-wrap">
+      <div className="user-panel-avatar">{profile?.avatar_url?<img src={imageUrl(profile.avatar_url)} alt={profile.name||'Perfil'}/>:<UserRound/>}</div>
+      <span className={`profile-verify-dot ${profileStatusClass}`} title={profileStatusLabel}>{profile?.verified?<BadgeCheck/>:<ShieldCheck/>}</span>
     </div>
-  </div>}
+    <div className="user-panel-profile-copy"><span className="section-kicker">MINHA CONTA</span><h1>{profile?.name||'Meu painel'}</h1><p>{profile?.email}</p><span className={`profile-status-pill ${profileStatusClass}`}>{profile?.verified?<BadgeCheck/>:<ShieldCheck/>}{profileStatusLabel}</span></div>
+    <Link className="primary small" to="/publicar"><PlusCircle/> Novo anúncio</Link>
+  </section>
 
-  <section className="dashboard-plan-section">
+  <nav className="user-panel-tabs" aria-label="Seções do painel">
+    <button className={activeTab==='overview'?'active':''} onClick={()=>setActiveTab('overview')}><LayoutDashboard/>Visão geral</button>
+    <button className={activeTab==='profile'?'active':''} onClick={()=>setActiveTab('profile')}><UserRound/>Perfil e segurança</button>
+    <Link to="/meus-anuncios"><PackageOpen/>Meus anúncios</Link>
+    <button className={activeTab==='plan'?'active':''} onClick={()=>setActiveTab('plan')}><Crown/>Plano</button>
+    <button className={activeTab==='partner'?'active':''} onClick={()=>setActiveTab('partner')}><Handshake/>Parceria</button>
+    <button className={activeTab==='payments'?'active':''} onClick={()=>setActiveTab('payments')}><CreditCard/>Pagamentos</button>
+  </nav>
+
+  {activeTab==='overview'&&<>
+    <div className="metric-grid compact-dashboard-metrics">{cards.map(([label,value,icon])=><div className="metric-card" key={label}><span className="metric-icon">{icon}</span><div><b>{value}</b><small>{label}</small></div></div>)}</div>
+    <div className="dashboard-actions compact-dashboard-actions"><Link to="/meus-anuncios"><b>Gerenciar anúncios</b><span>Editar, pausar ou destacar.</span></Link><Link to="/mensagens"><b>Abrir mensagens</b><span>Conversas com compradores.</span></Link><Link to="/favoritos"><b>Ver favoritos</b><span>Produtos que você salvou.</span></Link></div>
+    {expiringAds.length>0 && <div className="plan-expiry-alert"><AlertTriangle/><div><b>{expiringAds.length===1?'Seu plano está perto de vencer':'Você tem planos perto de vencer'}</b><span>{expiringAds.map(item=>`${item.title} (${item.days_left ?? 0} dia${item.days_left===1?'':'s'})`).join(' • ')}</span></div></div>}
+  </>}
+
+  {activeTab==='profile'&&<section className="profile-security-section">
+    <div className="profile-security-grid">
+      <div className="profile-card-v2165 profile-photo-card">
+        <div className="profile-card-title"><Camera/><div><h2>Foto do perfil</h2><p>JPG, PNG ou WEBP até 5 MB.</p></div></div>
+        <div className="profile-photo-preview">{profilePhotoPreview||profile?.avatar_url?<img src={profilePhotoPreview||imageUrl(profile?.avatar_url)} alt="Foto do perfil"/>:<UserRound/>}</div>
+        <label className="profile-file-btn"><Camera/>Selecionar foto<input type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseProfilePhoto}/></label>
+        {profilePhoto&&<button className="primary" onClick={uploadProfilePhoto} disabled={profileBusy}>{profileBusy?'Enviando...':'Salvar foto'}</button>}
+        <small className="verification-note">Ao trocar a foto, o perfil volta para revisão do Master.</small>
+      </div>
+
+      <form className="profile-card-v2165 profile-data-card" onSubmit={saveProfile}>
+        <div className="profile-card-title"><UserRound/><div><h2>Dados pessoais</h2><p>Todos os dados alterados passam por nova verificação.</p></div></div>
+        <div className="profile-form-grid">
+          <label>Nome completo<input value={profileForm.name} onChange={e=>setProfileForm({...profileForm,name:e.target.value})} required/></label>
+          <label>Telefone com DDD<input inputMode="tel" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:e.target.value})} placeholder="(45) 99999-9999"/></label>
+          <label className="span-2">Endereço<input value={profileForm.address_line} onChange={e=>setProfileForm({...profileForm,address_line:e.target.value})} placeholder="Rua, número e complemento"/></label>
+          <label>Bairro<input value={profileForm.neighborhood} onChange={e=>setProfileForm({...profileForm,neighborhood:e.target.value})}/></label>
+          <label>Cidade<input value={profileForm.city} onChange={e=>setProfileForm({...profileForm,city:e.target.value})}/></label>
+          <label>Estado<input maxLength="2" value={profileForm.state} onChange={e=>setProfileForm({...profileForm,state:e.target.value.toUpperCase()})} placeholder="PR"/></label>
+          <label>CEP<input inputMode="numeric" value={profileForm.postal_code} onChange={e=>setProfileForm({...profileForm,postal_code:e.target.value})} placeholder="00000-000"/></label>
+          <label className="span-2 confirmation-field"><ShieldCheck/>Senha atual para confirmar<input type="password" value={profileForm.current_password} onChange={e=>setProfileForm({...profileForm,current_password:e.target.value})} placeholder="Digite sua senha atual" required/></label>
+        </div>
+        <div className="profile-verification-banner"><ShieldCheck/><div><b>Verificação obrigatória</b><span>Ao salvar nome, telefone ou endereço, o selo de verificado fica pendente até aprovação no Painel Master.</span></div></div>
+        <button className="primary" disabled={profileBusy}>{profileBusy?'Salvando...':'Salvar e enviar para verificação'}</button>
+      </form>
+
+      <form className="profile-card-v2165 password-card-v2165" onSubmit={changePassword}>
+        <div className="profile-card-title"><LockKeyhole/><div><h2>Senha</h2><p>A senha atual confirma que a alteração é realmente sua.</p></div></div>
+        <label>Senha atual<input type="password" value={passwordForm.current_password} onChange={e=>setPasswordForm({...passwordForm,current_password:e.target.value})} required/></label>
+        <label>Nova senha<input type="password" minLength="8" value={passwordForm.new_password} onChange={e=>setPasswordForm({...passwordForm,new_password:e.target.value})} placeholder="Mínimo de 8 caracteres" required/></label>
+        <label>Confirmar nova senha<input type="password" minLength="8" value={passwordForm.confirm_password} onChange={e=>setPasswordForm({...passwordForm,confirm_password:e.target.value})} required/></label>
+        <button className="primary" disabled={passwordBusy}>{passwordBusy?'Alterando...':'Alterar senha'}</button>
+      </form>
+    </div>
+  </section>}
+
+  {activeTab==='plan'&&<section className="dashboard-plan-section">
     <div className="section-head small-head">
       <div>
         <span className="section-kicker">MEU PLANO</span>
@@ -198,9 +306,9 @@ export default function Dashboard(){
         </div>
       </div>)}
     </div> : <div className="empty empty-plan-box"><h3>Você ainda não ativou nenhum plano de destaque.</h3><p>Escolha um dos planos para dar mais visibilidade aos seus anúncios.</p><Link className="primary" to="/meus-anuncios"><Sparkles/> Escolher plano</Link></div>}
-  </section>
+  </section>}
 
-  <section className="my-partner-section">
+  {activeTab==='partner'&&<section className="my-partner-section">
     <div className="section-head small-head">
       <div><span className="section-kicker">MINHA PARCERIA</span><h2>Divulgue sua marca no ClassificaJá</h2><p className="section-desc">Benefício controlado pelo plano para dar visibilidade sem poluir o marketplace.</p></div>
       <Handshake/>
@@ -243,9 +351,9 @@ export default function Dashboard(){
       <div><h3>Parcerias disponíveis no Plus e Premium</h3><p>O plano Grátis não inclui publicidade de parceria. Faça upgrade para liberar espaços controlados de divulgação.</p></div>
       <Link className="primary" to="/meus-anuncios"><ArrowUpCircle/> Ver planos</Link>
     </div>}
-  </section>
+  </section>}
 
-  <section className="payment-history-section">
+  {activeTab==='payments'&&<section className="payment-history-section">
     <div className="section-head small-head">
       <div><span className="section-kicker">PAGAMENTOS</span><h2>Histórico de pagamentos</h2><p className="section-desc">Acompanhe pagamentos, forma utilizada, parcelas e status.</p></div>
       <History/>
@@ -254,6 +362,6 @@ export default function Dashboard(){
       <thead><tr><th>Data</th><th>Anúncio</th><th>Plano</th><th>Forma</th><th>Parcelas</th><th>Valor</th><th>Status</th></tr></thead>
       <tbody>{payments.map(row=><tr key={row.id}><td>{formatDate(row.paid_at||row.created_at)}</td><td>{row.product_title||'—'}</td><td>{row.plan_name||row.plan_code}</td><td>{row.method==='pix'?'PIX':'Cartão'}</td><td>{row.installment_label||'—'}</td><td>{money(row.amount)}</td><td><span className={`payment-status ${row.status}`}>{statusLabel(row.status)}</span></td></tr>)}</tbody>
     </table></div> : <div className="empty payment-empty"><h3>Nenhum pagamento registrado ainda.</h3></div>}
-  </section>
+  </section>}
  </div>
 }

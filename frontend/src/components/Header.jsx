@@ -26,7 +26,6 @@ export default function Header(){
   const [city,setCity]=useState('');
   const [slides,setSlides]=useState([]);
   const [slideIndex,setSlideIndex]=useState(0);
-  const [isSliderPaused,setIsSliderPaused]=useState(false);
 
   useEffect(()=>{
     if(!isHome){
@@ -42,10 +41,10 @@ export default function Header(){
   },[isHome]);
 
   useEffect(()=>{
-    if(!isHome||slides.length<2||isSliderPaused) return;
-    const timer=setInterval(()=>setSlideIndex(i=>(i+1)%slides.length),8000);
+    if(!isHome||slides.length<2) return;
+    const timer=setInterval(()=>setSlideIndex(i=>(i+1)%slides.length),4500);
     return()=>clearInterval(timer);
-  },[isHome,slides.length,isSliderPaused]);
+  },[isHome,slides.length]);
 
   function submitSearch(e){
     e.preventDefault();
@@ -63,13 +62,8 @@ export default function Header(){
   const activeSlide=slides[slideIndex]||slides[0]||null;
   const activeImage=activeSlide?.image_url?imageUrl(activeSlide.image_url):null;
   const slideVisual=activeSlide&&activeImage?<>
-    <span className="home-header-slide-accent accent-left" aria-hidden="true"/>
-    <span className="home-header-slide-accent accent-right" aria-hidden="true"/>
-    <span className="home-header-slide-badge">Destaque</span>
-    <div className="home-header-slide-stage">
-      <img className="home-header-slide-image" src={activeImage} alt={activeSlide.title||'Banner ClassificaJá'} loading="eager" decoding="async"/>
-      <span className="home-header-slide-shine" aria-hidden="true"/>
-    </div>
+    <span className="home-header-slide-bg" style={{backgroundImage:`url(${activeImage})`}} aria-hidden="true"/>
+    <img className="home-header-slide-image" src={activeImage} alt={activeSlide.title||'Banner ClassificaJá'}/>
     {(activeSlide.title||activeSlide.subtitle)&&<span className="home-header-slide-caption">
       {activeSlide.title&&<strong>{activeSlide.title}</strong>}
       {activeSlide.subtitle&&<small>{activeSlide.subtitle}</small>}
@@ -100,7 +94,7 @@ export default function Header(){
         {user&&<Link className="header-action" title="Mensagens" to="/mensagens"><MessageCircle/><span>Mensagens</span></Link>}
         <Link className="header-action" title="Favoritos" to="/favoritos"><Heart/><span>Favoritos</span></Link>
         {user ? <>
-          <Link className="header-action" title="Meu painel" to="/painel"><UserCircle/><span>Meu painel</span></Link>
+          <Link className="header-action header-profile-action" title="Meu painel" to="/painel">{user.avatar_url?<img className="header-avatar-img" src={imageUrl(user.avatar_url)} alt={user.name||'Perfil'}/>:<UserCircle/>}<span>Meu painel</span></Link>
           <Link className="publish-premium" to="/escolher-plano"><Plus/> <span>Anunciar</span></Link>
           {user.role==='admin'&&<Link className="header-action admin-header-action" title="Administração" to="/admin"><ShieldCheck/><span>Master</span></Link>}
           <button className="icon-btn logout-premium" title="Sair" onClick={()=>{logout();nav('/')}}><LogOut/></button>
@@ -112,7 +106,7 @@ export default function Header(){
     </div>
 
     {isHome&&<div className="home-header-slider-shell" aria-label="Destaques do ClassificaJá">
-      {activeSlide&&activeImage?<div className="home-header-slider" onMouseEnter={()=>setIsSliderPaused(true)} onMouseLeave={()=>setIsSliderPaused(false)} onTouchStart={()=>setIsSliderPaused(true)} onTouchEnd={()=>setIsSliderPaused(false)}>
+      {activeSlide&&activeImage?<div className="home-header-slider">
         {activeSlide.target_url?<a className="home-header-slide" href={activeSlide.target_url} target="_blank" rel="noreferrer sponsored" aria-label={activeSlide.title||'Abrir destaque'}>{slideVisual}</a>:<div className="home-header-slide">{slideVisual}</div>}
         {slides.length>1&&<>
           <button type="button" className="home-header-slider-arrow prev" onClick={()=>moveSlide(-1)} aria-label="Banner anterior"><ChevronLeft/></button>

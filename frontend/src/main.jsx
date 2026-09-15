@@ -17,7 +17,8 @@ function AuthProvider({children}) {
   }, []);
   const login = (data) => { setToken(data.token); setUser(data.user); };
   const logout = () => { setToken(null); setUser(null); };
-  return <AuthContext.Provider value={{user, loading, login, logout}}>{children}</AuthContext.Provider>;
+  const refreshUser = async () => { const fresh = await api('/api/me'); setUser(fresh); return fresh; };
+  return <AuthContext.Provider value={{user, loading, login, logout, refreshUser}}>{children}</AuthContext.Provider>;
 }
 
 createRoot(document.getElementById('root')).render(<BrowserRouter><AuthProvider><App /></AuthProvider></BrowserRouter>);

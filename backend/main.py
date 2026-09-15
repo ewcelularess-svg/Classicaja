@@ -129,7 +129,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.16.3")
+app = FastAPI(title="ClassificaJá API", version="2.16.5")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -356,6 +356,32 @@ async def save_home_slide_image(image: UploadFile):
     return f"/uploads/{local_name}"
 
 
+
+async def save_profile_image(image: UploadFile):
+    ext = Path(image.filename or "profile.jpg").suffix.lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(400, "Formato de imagem não suportado. Use JPG, PNG ou WEBP")
+    content = await image.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Foto maior que 5 MB")
+    filename = f"profiles/{uuid.uuid4().hex}{ext}"
+    if USE_SUPABASE_STORAGE:
+        import httpx
+        headers = {
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
+            "Content-Type": image.content_type or "image/jpeg",
+            "x-upsert": "false",
+        }
+        url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
+        response = httpx.post(url, headers=headers, content=content, timeout=30)
+        if response.status_code >= 300:
+            raise HTTPException(502, f"Falha ao enviar foto do perfil: {response.text[:180]}")
+        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+    local_name = f"profile_{uuid.uuid4().hex}{ext}"
+    (UPLOAD_DIR / local_name).write_bytes(content)
+    return f"/uploads/{local_name}"
+
 def delete_product_image(image_url: str | None):
     if not image_url:
         return
@@ -534,6 +560,14 @@ def init_db():
         ensure_column(db, "users", "verified", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "users", "status", "TEXT NOT NULL DEFAULT 'active'")
         ensure_column(db, "users", "avatar_url", "TEXT")
+        ensure_column(db, "users", "address_line", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "users", "neighborhood", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "users", "city", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "users", "state", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "users", "postal_code", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "users", "profile_review_status", "TEXT NOT NULL DEFAULT 'unverified'")
+        ensure_column(db, "users", "profile_updated_at", "TEXT")
+        db.execute("UPDATE users SET profile_review_status='verified' WHERE verified=1 AND profile_review_status='unverified'")
         ensure_column(db, "products", "neighborhood", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "products", "status", "TEXT NOT NULL DEFAULT 'active'")
         ensure_column(db, "products", "featured_until", "TEXT")
@@ -815,6 +849,22 @@ class VerifyIn(BaseModel):
     verified: bool
 
 
+class ProfileUpdateIn(BaseModel):
+    current_password: str
+    name: str
+    phone: str = ""
+    address_line: str = ""
+    neighborhood: str = ""
+    city: str = ""
+    state: str = ""
+    postal_code: str = ""
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class AdminUserStatusIn(BaseModel):
     status: str
 
@@ -1029,10 +1079,21 @@ def create_session(db, user_id: str):
 
 
 def user_public(row):
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
+    def value(key, default=""):
+        return row[key] if key in keys and row[key] is not None else default
     return {
-        "id": row["id"], "name": row["name"], "email": row["email"], "phone": row["phone"],
+        "id": row["id"], "name": row["name"], "email": row["email"], "phone": value("phone"),
         "role": row["role"], "verified": bool(row["verified"]), "status": row["status"],
         "created_at": row["created_at"],
+        "avatar_url": value("avatar_url"),
+        "address_line": value("address_line"),
+        "neighborhood": value("neighborhood"),
+        "city": value("city"),
+        "state": value("state"),
+        "postal_code": value("postal_code"),
+        "profile_review_status": value("profile_review_status", "verified" if bool(row["verified"]) else "unverified"),
+        "profile_updated_at": value("profile_updated_at", None),
     }
 
 
@@ -1099,7 +1160,7 @@ def normalize_product_images(data):
 
 def product_dict(db, row, user_id: str | None = None):
     data = dict(row)
-    seller = db.execute("SELECT id,name,phone,verified,created_at FROM users WHERE id=?", (data["seller_id"],)).fetchone()
+    seller = db.execute("SELECT id,name,phone,verified,created_at,avatar_url FROM users WHERE id=?", (data["seller_id"],)).fetchone()
     data["seller"] = dict(seller) if seller else None
     if data["seller"]:
         data["seller"]["verified"] = bool(data["seller"]["verified"])
@@ -1136,7 +1197,7 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.16.1", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.16.5", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 @app.post("/api/auth/register")
@@ -1175,6 +1236,66 @@ def login(payload: LoginIn):
 @app.get("/api/me")
 def me(user=Depends(current_user)):
     return user_public(user)
+
+
+@app.put("/api/me/profile")
+def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_user)):
+    if not verify_password(payload.current_password, user["password_salt"], user["password_hash"]):
+        raise HTTPException(401, "Senha atual incorreta")
+    name = payload.name.strip()
+    if len(name) < 2:
+        raise HTTPException(400, "Informe um nome válido")
+    phone_digits = "".join(ch for ch in payload.phone if ch.isdigit())
+    if phone_digits and len(phone_digits) not in {10, 11}:
+        raise HTTPException(400, "Informe um telefone brasileiro válido com DDD")
+    postal_digits = "".join(ch for ch in payload.postal_code if ch.isdigit())
+    if postal_digits and len(postal_digits) != 8:
+        raise HTTPException(400, "Informe um CEP válido com 8 dígitos")
+    state = payload.state.strip().upper()
+    if state and len(state) != 2:
+        raise HTTPException(400, "Use a sigla do estado com 2 letras")
+    with conn() as db:
+        db.execute(
+            """UPDATE users SET name=?,phone=?,address_line=?,neighborhood=?,city=?,state=?,postal_code=?,
+               verified=0,profile_review_status='pending',profile_updated_at=? WHERE id=?""",
+            (name, phone_digits, payload.address_line.strip(), payload.neighborhood.strip(), payload.city.strip(), state, postal_digits, now_iso(), user["id"]),
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+    return {"ok": True, "message": "Dados salvos e enviados para verificação do Master", "user": user_public(row)}
+
+
+@app.post("/api/me/avatar")
+async def update_my_avatar(current_password: str = Form(...), image: UploadFile = File(...), user=Depends(current_user)):
+    if not verify_password(current_password, user["password_salt"], user["password_hash"]):
+        raise HTTPException(401, "Senha atual incorreta")
+    new_url = await save_profile_image(image)
+    old_url = user.get("avatar_url")
+    with conn() as db:
+        db.execute(
+            "UPDATE users SET avatar_url=?,verified=0,profile_review_status='pending',profile_updated_at=? WHERE id=?",
+            (new_url, now_iso(), user["id"]),
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+    if old_url and old_url != new_url:
+        delete_product_image(old_url)
+    return {"ok": True, "message": "Foto atualizada e enviada para verificação do Master", "user": user_public(row)}
+
+
+@app.put("/api/me/password")
+def update_my_password(payload: PasswordChangeIn, user=Depends(current_user)):
+    if not verify_password(payload.current_password, user["password_salt"], user["password_hash"]):
+        raise HTTPException(401, "Senha atual incorreta")
+    if len(payload.new_password) < 8:
+        raise HTTPException(400, "A nova senha precisa ter pelo menos 8 caracteres")
+    if payload.current_password == payload.new_password:
+        raise HTTPException(400, "A nova senha deve ser diferente da atual")
+    salt, pwhash = hash_password(payload.new_password)
+    with conn() as db:
+        db.execute("UPDATE users SET password_salt=?,password_hash=? WHERE id=?", (salt, pwhash, user["id"]))
+        db.commit()
+    return {"ok": True, "message": "Senha alterada com sucesso"}
 
 
 @app.get("/api/categories")
@@ -2414,7 +2535,7 @@ def admin_delete_product(product_id: str, user=Depends(admin_user)):
 def admin_users(user=Depends(admin_user)):
     with conn() as db:
         rows = db.execute(
-            """SELECT u.id,u.name,u.email,u.phone,u.role,u.verified,u.status,u.created_at,
+            """SELECT u.id,u.name,u.email,u.phone,u.role,u.verified,u.status,u.created_at,u.avatar_url,u.profile_review_status,u.profile_updated_at,
                       (SELECT COUNT(*) FROM products p WHERE p.seller_id=u.id) ad_count,
                       (SELECT COALESCE(SUM(po.amount),0) FROM payment_orders po WHERE po.user_id=u.id AND po.status='paid') paid_total
                FROM users u ORDER BY u.created_at DESC LIMIT 500"""
@@ -2425,7 +2546,7 @@ def admin_users(user=Depends(admin_user)):
 @app.put("/api/admin/users/{user_id}/verify")
 def admin_verify_user(user_id: str, payload: VerifyIn, user=Depends(admin_user)):
     with conn() as db:
-        db.execute("UPDATE users SET verified=? WHERE id=?", (1 if payload.verified else 0, user_id))
+        db.execute("UPDATE users SET verified=?,profile_review_status=? WHERE id=?", (1 if payload.verified else 0, "verified" if payload.verified else "unverified", user_id))
         if db.total_changes == 0:
             raise HTTPException(404, "Usuário não encontrado")
         db.commit()

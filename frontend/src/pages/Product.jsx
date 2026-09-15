@@ -127,7 +127,7 @@ export default function Product(){
   </div>
 
   <section className="product-seller-v2162">
-    <div className="seller-avatar-v2162">{(p.seller?.name||'V').trim().charAt(0).toUpperCase()}</div>
+    <div className="seller-avatar-v2162">{p.seller?.avatar_url?<img src={imageUrl(p.seller.avatar_url)} alt={p.seller?.name||'Vendedor'}/>:((p.seller?.name||'V').trim().charAt(0).toUpperCase())}</div>
     <div className="seller-copy-v2162">
       <div className="seller-name-v2162"><b>{p.seller?.name||'Vendedor'}</b>{p.seller?.verified&&<BadgeCheck/>}</div>
       {memberSince&&<span>Membro desde {memberSince}</span>}
