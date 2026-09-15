@@ -129,7 +129,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.16.1")
+app = FastAPI(title="ClassificaJá API", version="2.16.3")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -326,6 +326,32 @@ async def save_partner_image(image: UploadFile):
             raise HTTPException(502, f"Falha ao enviar imagem da parceria: {response.text[:180]}")
         return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
     local_name = f"partner_{uuid.uuid4().hex}{ext}"
+    (UPLOAD_DIR / local_name).write_bytes(content)
+    return f"/uploads/{local_name}"
+
+
+async def save_home_slide_image(image: UploadFile):
+    ext = Path(image.filename or "home-slide.jpg").suffix.lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(400, "Formato de imagem não suportado. Use JPG, PNG ou WEBP")
+    content = await image.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Imagem maior que 10 MB")
+    filename = f"home-slides/{uuid.uuid4().hex}{ext}"
+    if USE_SUPABASE_STORAGE:
+        import httpx
+        headers = {
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
+            "Content-Type": image.content_type or "image/jpeg",
+            "x-upsert": "false",
+        }
+        url = f"{SUPABASE_URL}/storage/v1/object/{quote(SUPABASE_BUCKET)}/{quote(filename, safe='/')}"
+        response = httpx.post(url, headers=headers, content=content, timeout=30)
+        if response.status_code >= 300:
+            raise HTTPException(502, f"Falha ao enviar imagem do slider: {response.text[:180]}")
+        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+    local_name = f"home_slide_{uuid.uuid4().hex}{ext}"
     (UPLOAD_DIR / local_name).write_bytes(content)
     return f"/uploads/{local_name}"
 
@@ -541,6 +567,17 @@ def init_db():
         ensure_column(db, "partner_ads", "owner_user_id", "TEXT")
         ensure_column(db, "partner_ads", "source", "TEXT NOT NULL DEFAULT 'admin'")
         ensure_column(db, "partner_ads", "expires_at", "TEXT")
+        db.execute("""CREATE TABLE IF NOT EXISTS home_slides (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            subtitle TEXT,
+            image_url TEXT NOT NULL,
+            target_url TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
         # Migração dos anúncios de parceria antigos: quem já estava no topo mantém nível Premium.
         db.execute("UPDATE partner_ads SET plan_tier='premium' WHERE placement IN ('home_top','both') AND plan_tier='free'")
         db.execute("UPDATE partner_ads SET placement='auto' WHERE placement IN ('home_top','feed_end','both')")
@@ -694,6 +731,7 @@ def init_db():
             "Parceria básica: exibição em áreas de menor destaque (fim do feed e rodapé de anúncios)",
             "Parceria Plus: presença no feed e em áreas intermediárias das páginas de anúncios",
             "Parceria Premium: prioridade máxima após categorias e nas áreas nobres das páginas de anúncios",
+            "Exibição no slider principal da página inicial",
         }
         partner_benefits = {
             "boost_15": "Parceria Plus: 1 campanha por mês no feed e em áreas intermediárias das páginas de anúncios",
@@ -719,10 +757,6 @@ def init_db():
                     limitations.append(limitation)
             else:
                 features.append(partner_benefits[plan_code])
-                if plan_code == "boost_30":
-                    slider_benefit = "Exibição no slider principal da página inicial"
-                    if slider_benefit not in features:
-                        features.append(slider_benefit)
             db.execute(
                 "UPDATE plan_settings SET features_json=?,limitations_json=?,updated_at=? WHERE code=?",
                 (json.dumps(features, ensure_ascii=False), json.dumps(limitations, ensure_ascii=False), now_iso(), plan_code),
@@ -811,6 +845,15 @@ class PartnerAdIn(BaseModel):
     active: bool = True
 
 
+class HomeSlideIn(BaseModel):
+    title: Optional[str] = ""
+    subtitle: Optional[str] = ""
+    image_url: str
+    target_url: Optional[str] = ""
+    active: bool = True
+    sort_order: int = 0
+
+
 class MyPartnerAdIn(BaseModel):
     company_name: str
     title: str
@@ -873,8 +916,7 @@ PLANS = {
             "30 dias de destaque premium",
             "Mais visualizações no catálogo",
             "Maior exposição entre os anúncios",
-            "Até 2 campanhas de parceria por mês com prioridade Premium",
-            "Exibição no slider principal da página inicial"
+            "Até 2 campanhas de parceria por mês com prioridade Premium"
         ],
         "limitations": []
     },
@@ -1190,6 +1232,17 @@ def public_partner_ads(slot: str = "feed_end", placement: str = "", limit: int =
                   ))
                 ORDER BY {tier_order} DESC, RANDOM() LIMIT ?""",
             (*tiers, now, now, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/home-slides")
+def public_home_slides(limit: int = 8):
+    limit = max(1, min(int(limit or 8), 12))
+    with conn() as db:
+        rows = db.execute(
+            "SELECT * FROM home_slides WHERE active=1 ORDER BY sort_order ASC, created_at DESC LIMIT ?",
+            (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -2669,6 +2722,71 @@ def my_deactivate_partner_ad(ad_id: str, user=Depends(current_user)):
             raise HTTPException(404, "Parceria não encontrada")
         db.execute("UPDATE partner_ads SET active=0,updated_at=? WHERE id=?", (now_iso(), ad_id))
         db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/home-slides")
+def admin_home_slides(user=Depends(admin_user)):
+    with conn() as db:
+        rows = db.execute("SELECT * FROM home_slides ORDER BY sort_order ASC, created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/admin/home-slides/image")
+async def admin_home_slide_image(image: UploadFile = File(...), user=Depends(admin_user)):
+    image_url = await save_home_slide_image(image)
+    return {"image_url": image_url}
+
+
+@app.post("/api/admin/home-slides")
+def admin_create_home_slide(payload: HomeSlideIn, user=Depends(admin_user)):
+    image_url = (payload.image_url or "").strip()
+    if not image_url:
+        raise HTTPException(400, "Selecione uma imagem para o slider")
+    slide_id = str(uuid.uuid4())
+    now = now_iso()
+    with conn() as db:
+        db.execute(
+            "INSERT INTO home_slides(id,title,subtitle,image_url,target_url,active,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (slide_id,(payload.title or "").strip(),(payload.subtitle or "").strip(),image_url,(payload.target_url or "").strip(),1 if payload.active else 0,int(payload.sort_order or 0),now,now),
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM home_slides WHERE id=?", (slide_id,)).fetchone()
+    return dict(row)
+
+
+@app.put("/api/admin/home-slides/{slide_id}")
+def admin_update_home_slide(slide_id: str, payload: HomeSlideIn, user=Depends(admin_user)):
+    image_url = (payload.image_url or "").strip()
+    if not image_url:
+        raise HTTPException(400, "Selecione uma imagem para o slider")
+    with conn() as db:
+        current = db.execute("SELECT * FROM home_slides WHERE id=?", (slide_id,)).fetchone()
+        if not current:
+            raise HTTPException(404, "Slide não encontrado")
+        old_image = current["image_url"]
+        db.execute(
+            "UPDATE home_slides SET title=?,subtitle=?,image_url=?,target_url=?,active=?,sort_order=?,updated_at=? WHERE id=?",
+            ((payload.title or "").strip(),(payload.subtitle or "").strip(),image_url,(payload.target_url or "").strip(),1 if payload.active else 0,int(payload.sort_order or 0),now_iso(),slide_id),
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM home_slides WHERE id=?", (slide_id,)).fetchone()
+    if old_image and old_image != image_url and (old_image.startswith("/uploads/") or (SUPABASE_URL and old_image.startswith(SUPABASE_URL))):
+        delete_product_image(old_image)
+    return dict(row)
+
+
+@app.delete("/api/admin/home-slides/{slide_id}")
+def admin_delete_home_slide(slide_id: str, user=Depends(admin_user)):
+    with conn() as db:
+        current = db.execute("SELECT * FROM home_slides WHERE id=?", (slide_id,)).fetchone()
+        if not current:
+            raise HTTPException(404, "Slide não encontrado")
+        image_url = current["image_url"]
+        db.execute("DELETE FROM home_slides WHERE id=?", (slide_id,))
+        db.commit()
+    if image_url and (image_url.startswith("/uploads/") or (SUPABASE_URL and image_url.startswith(SUPABASE_URL))):
+        delete_product_image(image_url)
     return {"ok": True}
 
 
