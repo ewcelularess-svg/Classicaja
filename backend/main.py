@@ -496,6 +496,14 @@ def init_db():
               FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
               FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS hidden_conversations (
+              user_id TEXT NOT NULL,
+              conversation_id TEXT NOT NULL,
+              hidden_at TEXT NOT NULL,
+              PRIMARY KEY(user_id, conversation_id),
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS reports (
               id TEXT PRIMARY KEY,
               reporter_id TEXT NOT NULL,
@@ -2342,9 +2350,10 @@ def start_conversation(product_id: str, user=Depends(current_user)):
         if not c:
             cid = str(uuid.uuid4())
             db.execute("INSERT INTO conversations(id,product_id,buyer_id,seller_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (cid, product_id, user["id"], p["seller_id"], now_iso(), now_iso()))
-            db.commit()
         else:
             cid = c["id"]
+        db.execute("DELETE FROM hidden_conversations WHERE conversation_id=? AND user_id=?", (cid, user["id"]))
+        db.commit()
     return {"conversation_id": cid}
 
 
@@ -2353,7 +2362,7 @@ def conversation_dict(db, row, me_id):
     p = db.execute("SELECT id,title,price,image_url,status FROM products WHERE id=?", (row["product_id"],)).fetchone()
     other_id = row["seller_id"] if row["buyer_id"] == me_id else row["buyer_id"]
     other = db.execute("SELECT id,name,verified FROM users WHERE id=?", (other_id,)).fetchone()
-    last = db.execute("SELECT body,created_at FROM messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT 1", (row["id"],)).fetchone()
+    last = db.execute("SELECT body,created_at,sender_id FROM messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT 1", (row["id"],)).fetchone()
     unread = db.execute("SELECT COUNT(*) n FROM messages WHERE conversation_id=? AND sender_id<>? AND read_at IS NULL", (row["id"], me_id)).fetchone()["n"]
     data["product"] = dict(p) if p else None
     data["other_user"] = dict(other) if other else None
@@ -2361,14 +2370,40 @@ def conversation_dict(db, row, me_id):
         data["other_user"]["verified"] = bool(data["other_user"]["verified"])
     data["last_message"] = dict(last) if last else None
     data["unread"] = unread
+    data["is_seller"] = row["seller_id"] == me_id
+    data["updated_at"] = row["updated_at"]
     return data
 
 
 @app.get("/api/me/conversations")
 def my_conversations(user=Depends(current_user)):
     with conn() as db:
-        rows = db.execute("SELECT * FROM conversations WHERE buyer_id=? OR seller_id=? ORDER BY updated_at DESC", (user["id"], user["id"])).fetchall()
+        rows = db.execute(
+            """SELECT * FROM conversations
+               WHERE (buyer_id=? OR seller_id=?)
+                 AND id NOT IN (SELECT conversation_id FROM hidden_conversations WHERE user_id=?)
+               ORDER BY updated_at DESC""",
+            (user["id"], user["id"], user["id"]),
+        ).fetchall()
         return [conversation_dict(db, r, user["id"]) for r in rows]
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def hide_conversation(conversation_id: str, user=Depends(current_user)):
+    with conn() as db:
+        c = db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+        if not c or user["id"] not in {c["buyer_id"], c["seller_id"]}:
+            raise HTTPException(404, "Conversa não encontrada")
+        db.execute(
+            "INSERT OR REPLACE INTO hidden_conversations(user_id,conversation_id,hidden_at) VALUES (?,?,?)",
+            (user["id"], conversation_id, now_iso()),
+        )
+        db.execute(
+            "UPDATE messages SET read_at=COALESCE(read_at, ?) WHERE conversation_id=? AND sender_id<>?",
+            (now_iso(), conversation_id, user["id"]),
+        )
+        db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/conversations/{conversation_id}/messages")
@@ -2412,6 +2447,7 @@ def send_message(conversation_id: str, payload: MessageIn, user=Depends(current_
         db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (created_at, conversation_id))
 
         recipient_id = c["seller_id"] if user["id"] == c["buyer_id"] else c["buyer_id"]
+        db.execute("DELETE FROM hidden_conversations WHERE conversation_id=? AND user_id IN (?,?)", (conversation_id, user["id"], recipient_id))
         product = db.execute("SELECT id,title FROM products WHERE id=?", (c["product_id"],)).fetchone()
         sender = db.execute("SELECT name FROM users WHERE id=?", (user["id"],)).fetchone()
         product_title = product["title"] if product else "anúncio"
