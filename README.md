@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.6
+# ClassificaJá V2.18.8
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.6 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.8 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
 
 ## Stack
 
@@ -61,7 +61,7 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.6"`.
+A resposta deve indicar `"version":"2.18.8"`.
 
 ## Migração automática
 
@@ -85,8 +85,19 @@ A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fo
 - Palavras extensas quebram de forma segura sem ultrapassar o card.
 
 
-## Home clean e carrossel — V2.18.6
+## Home clean e carrossel — V2.18.8
 
 - Badges e contadores não ficam mais sobre as fotos dos cards.
 - Metadados aparecem em chips discretos abaixo da imagem.
 - A seção Ofertas em destaque usa carrossel automático com setas, indicadores e swipe no mobile.
+
+
+## Carrossel Premium e imagens padronizadas — V2.18.8
+
+- O carrossel de ofertas em destaque usa uma área visual fixa por breakpoint.
+- A foto principal usa `object-fit: contain`, preservando toda a imagem sem deformar.
+- Uma cópia desfocada da própria foto preenche o fundo, evitando faixas vazias e diferenças visuais entre fotos verticais, quadradas e horizontais.
+- Notebook/desktop médio: carrossel compacto com largura máxima de 900 px e altura de 280 px.
+- Desktop grande: largura máxima de 1080 px e altura de 360 px.
+- Mobile: proporção 16:10, mantendo a foto inteira e responsiva.
+- O bloco recebeu acabamento premium: moldura suave, faixa de destaque, selo, sombra, CTA e navegação refinados.

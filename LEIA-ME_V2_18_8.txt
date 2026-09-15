@@ -1,0 +1,13 @@
+CLASSIFICAJÁ V2.18.8 — CARROSSEL PREMIUM E IMAGENS PADRONIZADAS
+
+- Corrige diferenças de tamanho/proporção das imagens do carrossel.
+- Não deforma imagens.
+- Mantém a foto inteira sobre um fundo desfocado da própria foto.
+- Notebook: carrossel compacto 900 x 280 px (máximo).
+- Desktop grande: 1080 x 360 px (máximo).
+- Mobile: proporção 16:10.
+- Visual premium com borda, sombra, faixa de destaque, selo e controles refinados.
+
+Após o deploy, confirme:
+https://www.classificaja.com.br/api/health
+Esperado: "version":"2.18.8"

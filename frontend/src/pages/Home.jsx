@@ -116,6 +116,7 @@ export default function Home(){
    if(end<start) featuredNext(); else featuredPrev();
  };
  const activeFeatured=featured[featuredIndex];
+ const activeFeaturedImage=activeFeatured?((activeFeatured.images&&activeFeatured.images[0])||activeFeatured.image_url||''):'';
 
  return <>
   <section className="section category-section clean-category-section" id="categorias">
@@ -129,8 +130,11 @@ export default function Home(){
     <div className="featured-product-carousel" onMouseEnter={()=>setFeaturedPaused(true)} onMouseLeave={()=>setFeaturedPaused(false)} onTouchStart={e=>{featuredTouchStart.current=e.touches?.[0]?.clientX??null;setFeaturedPaused(true)}} onTouchEnd={e=>{featuredTouchEnd(e);setFeaturedPaused(false)}}>
       <Link key={activeFeatured.id} className="featured-carousel-slide" to={`/produto/${activeFeatured.id}`} aria-label={`Ver anúncio ${activeFeatured.title}`}>
         <div className="featured-carousel-image">
-          {((activeFeatured.images&&activeFeatured.images[0])||activeFeatured.image_url)
-            ? <img src={imageUrl((activeFeatured.images&&activeFeatured.images[0])||activeFeatured.image_url)} alt={activeFeatured.title}/>
+          {activeFeaturedImage
+            ? <>
+                <img className="featured-carousel-image-backdrop" src={imageUrl(activeFeaturedImage)} alt="" aria-hidden="true"/>
+                <img className="featured-carousel-image-main" src={imageUrl(activeFeaturedImage)} alt={activeFeatured.title}/>
+              </>
             : <div className="featured-carousel-placeholder">📦</div>}
         </div>
         <div className="featured-carousel-copy">
