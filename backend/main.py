@@ -136,7 +136,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.16.6")
+app = FastAPI(title="ClassificaJá API", version="2.16.7")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -580,6 +580,11 @@ def init_db():
         ensure_column(db, "users", "profile_review_status", "TEXT NOT NULL DEFAULT 'unverified'")
         ensure_column(db, "users", "profile_updated_at", "TEXT")
         ensure_column(db, "users", "email_verified", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "users", "email_verification_source", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "users", "name_verification_status", "TEXT NOT NULL DEFAULT 'unverified'")
+        ensure_column(db, "users", "phone_verification_status", "TEXT NOT NULL DEFAULT 'unverified'")
+        ensure_column(db, "users", "address_verification_status", "TEXT NOT NULL DEFAULT 'unverified'")
+        ensure_column(db, "users", "avatar_verification_status", "TEXT NOT NULL DEFAULT 'unverified'")
         ensure_column(db, "users", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
         ensure_column(db, "sessions", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
         ensure_column(db, "sessions", "authenticated_at", "TEXT")
@@ -596,6 +601,40 @@ def init_db():
             UNIQUE(provider, provider_user_id),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )""")
+        # V2.16.7 — verificação independente por dado.
+        # Preserva aprovações antigas apenas quando o respectivo dado realmente existe.
+        db.execute("UPDATE users SET email_verification_source='master' WHERE email_verified=1 AND (email_verification_source IS NULL OR email_verification_source='')")
+        db.execute("UPDATE users SET email_verification_source='facebook' WHERE email_verified=1 AND id IN (SELECT user_id FROM user_identities WHERE provider='facebook')")
+        db.execute("UPDATE users SET email_verification_source='google' WHERE email_verified=1 AND id IN (SELECT user_id FROM user_identities WHERE provider='google')")
+        db.execute("""UPDATE users SET name_verification_status=
+            CASE WHEN verified=1 AND TRIM(COALESCE(name,''))<>'' THEN 'verified'
+                 WHEN profile_review_status='pending' AND TRIM(COALESCE(name,''))<>'' THEN 'pending'
+                 ELSE name_verification_status END
+            WHERE name_verification_status='unverified'""")
+        db.execute("""UPDATE users SET phone_verification_status=
+            CASE WHEN verified=1 AND TRIM(COALESCE(phone,''))<>'' THEN 'verified'
+                 WHEN profile_review_status='pending' AND TRIM(COALESCE(phone,''))<>'' THEN 'pending'
+                 ELSE phone_verification_status END
+            WHERE phone_verification_status='unverified'""")
+        db.execute("""UPDATE users SET address_verification_status=
+            CASE WHEN verified=1 AND TRIM(COALESCE(address_line,''))<>'' AND TRIM(COALESCE(city,''))<>'' AND TRIM(COALESCE(state,''))<>'' AND TRIM(COALESCE(postal_code,''))<>'' THEN 'verified'
+                 WHEN profile_review_status='pending' AND TRIM(COALESCE(address_line,''))<>'' THEN 'pending'
+                 ELSE address_verification_status END
+            WHERE address_verification_status='unverified'""")
+        db.execute("""UPDATE users SET avatar_verification_status=
+            CASE WHEN verified=1 AND TRIM(COALESCE(avatar_url,''))<>'' THEN 'verified'
+                 WHEN profile_review_status='pending' AND TRIM(COALESCE(avatar_url,''))<>'' THEN 'pending'
+                 ELSE avatar_verification_status END
+            WHERE avatar_verification_status='unverified'""")
+        # O selo geral só existe quando TODOS os dados obrigatórios estão verificados.
+        db.execute("""UPDATE users SET verified=CASE WHEN
+            email_verified=1 AND name_verification_status='verified' AND phone_verification_status='verified'
+            AND address_verification_status='verified' AND avatar_verification_status='verified'
+            THEN 1 ELSE 0 END""")
+        db.execute("""UPDATE users SET profile_review_status=CASE
+            WHEN verified=1 THEN 'verified'
+            WHEN name_verification_status='pending' OR phone_verification_status='pending' OR address_verification_status='pending' OR avatar_verification_status='pending' THEN 'pending'
+            ELSE 'unverified' END""")
         ensure_column(db, "products", "neighborhood", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "products", "status", "TEXT NOT NULL DEFAULT 'active'")
         ensure_column(db, "products", "featured_until", "TEXT")
@@ -1132,6 +1171,11 @@ def user_public(row):
         "profile_review_status": value("profile_review_status", "verified" if bool(row["verified"]) else "unverified"),
         "profile_updated_at": value("profile_updated_at", None),
         "email_verified": bool(value("email_verified", 0)),
+        "email_verification_source": value("email_verification_source", ""),
+        "name_verification_status": value("name_verification_status", "unverified"),
+        "phone_verification_status": value("phone_verification_status", "unverified"),
+        "address_verification_status": value("address_verification_status", "unverified"),
+        "avatar_verification_status": value("avatar_verification_status", "unverified"),
         "auth_provider": value("auth_provider", "local"),
         "has_password": bool(value("password_salt") and value("password_hash")),
     }
@@ -1171,6 +1215,43 @@ def current_auth_context(authorization: Optional[str] = Header(default=None)):
 def _row_value(row, key, default=""):
     keys = set(row.keys()) if hasattr(row, "keys") else set()
     return row[key] if key in keys and row[key] is not None else default
+
+
+VERIFICATION_FIELDS = {
+    "name": "name_verification_status",
+    "phone": "phone_verification_status",
+    "address": "address_verification_status",
+    "avatar": "avatar_verification_status",
+}
+
+
+def _normalize_verification_status(value: str) -> str:
+    return value if value in {"verified", "pending", "unverified"} else "unverified"
+
+
+def _recompute_user_verification(db, user_id: str):
+    row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        return None
+    complete = bool(_row_value(row, "email_verified", 0))
+    complete = complete and all(
+        _normalize_verification_status(str(_row_value(row, col, "unverified"))) == "verified"
+        for col in VERIFICATION_FIELDS.values()
+    )
+    pending = any(
+        _normalize_verification_status(str(_row_value(row, col, "unverified"))) == "pending"
+        for col in VERIFICATION_FIELDS.values()
+    )
+    review_status = "verified" if complete else ("pending" if pending else "unverified")
+    db.execute(
+        "UPDATE users SET verified=?,profile_review_status=? WHERE id=?",
+        (1 if complete else 0, review_status, user_id),
+    )
+    return db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+
+def _address_is_complete(address_line: str, city: str, state: str, postal_code: str) -> bool:
+    return bool(address_line.strip() and city.strip() and state.strip() and postal_code.strip())
 
 
 def _has_password(row) -> bool:
@@ -1289,7 +1370,7 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.16.6", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.16.7", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -1425,8 +1506,10 @@ def social_login(payload: SocialLoginIn):
                 )
                 updates = []
                 params = []
-                if identity.get("email_verified") and not bool(_row_value(user, "email_verified", 0)):
+                if identity.get("email_verified"):
                     updates.append("email_verified=1")
+                    updates.append("email_verification_source=?")
+                    params.append(provider)
                 if identity.get("avatar_url") and not _row_value(user, "avatar_url", ""):
                     updates.append("avatar_url=?")
                     params.append(identity["avatar_url"] )
@@ -1443,12 +1526,12 @@ def social_login(payload: SocialLoginIn):
                 db.execute(
                     """INSERT INTO users(
                         id,name,email,phone,password_salt,password_hash,created_at,role,verified,status,
-                        avatar_url,email_verified,auth_provider,profile_review_status
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        avatar_url,email_verified,email_verification_source,auth_provider,profile_review_status
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         uid, identity.get("name") or email.split("@", 1)[0], email, "", "", "", now_iso(),
                         "user", 0, "active", identity.get("avatar_url") or None,
-                        1 if identity.get("email_verified") else 0, provider, "unverified",
+                        1 if identity.get("email_verified") else 0, provider if identity.get("email_verified") else "", provider, "unverified",
                     ),
                 )
                 db.execute(
@@ -1522,15 +1605,43 @@ def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_auth_contex
     state = payload.state.strip().upper()
     if state and len(state) != 2:
         raise HTTPException(400, "Use a sigla do estado com 2 letras")
+    address_line = payload.address_line.strip()
+    neighborhood = payload.neighborhood.strip()
+    city = payload.city.strip()
+    old_name = str(_row_value(user, "name", "") or "").strip()
+    old_phone = "".join(ch for ch in str(_row_value(user, "phone", "") or "") if ch.isdigit())
+    old_address = (
+        str(_row_value(user, "address_line", "") or "").strip(),
+        str(_row_value(user, "neighborhood", "") or "").strip(),
+        str(_row_value(user, "city", "") or "").strip(),
+        str(_row_value(user, "state", "") or "").strip().upper(),
+        "".join(ch for ch in str(_row_value(user, "postal_code", "") or "") if ch.isdigit()),
+    )
+    new_address = (address_line, neighborhood, city, state, postal_digits)
+    name_status = _normalize_verification_status(str(_row_value(user, "name_verification_status", "unverified")))
+    phone_status = _normalize_verification_status(str(_row_value(user, "phone_verification_status", "unverified")))
+    address_status = _normalize_verification_status(str(_row_value(user, "address_verification_status", "unverified")))
+    changed = []
+    if name != old_name:
+        name_status = "pending"
+        changed.append("nome")
+    if phone_digits != old_phone:
+        phone_status = "pending" if phone_digits else "unverified"
+        changed.append("telefone")
+    if new_address != old_address:
+        address_status = "pending" if _address_is_complete(address_line, city, state, postal_digits) else "unverified"
+        changed.append("endereço")
     with conn() as db:
         db.execute(
             """UPDATE users SET name=?,phone=?,address_line=?,neighborhood=?,city=?,state=?,postal_code=?,
-               verified=0,profile_review_status='pending',profile_updated_at=? WHERE id=?""",
-            (name, phone_digits, payload.address_line.strip(), payload.neighborhood.strip(), payload.city.strip(), state, postal_digits, now_iso(), user["id"]),
+               name_verification_status=?,phone_verification_status=?,address_verification_status=?,profile_updated_at=? WHERE id=?""",
+            (name, phone_digits, address_line, neighborhood, city, state, postal_digits,
+             name_status, phone_status, address_status, now_iso(), user["id"]),
         )
+        row = _recompute_user_verification(db, user["id"])
         db.commit()
-        row = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
-    return {"ok": True, "message": "Dados salvos e enviados para verificação do Master", "user": user_public(row)}
+    message = "Nenhum dado verificado foi alterado." if not changed else "Somente os dados alterados foram enviados para verificação: " + ", ".join(changed) + "."
+    return {"ok": True, "message": message, "user": user_public(row)}
 
 
 @app.post("/api/me/avatar")
@@ -1540,14 +1651,14 @@ async def update_my_avatar(current_password: str = Form(""), image: UploadFile =
     old_url = _row_value(user, "avatar_url", "")
     with conn() as db:
         db.execute(
-            "UPDATE users SET avatar_url=?,verified=0,profile_review_status='pending',profile_updated_at=? WHERE id=?",
+            "UPDATE users SET avatar_url=?,avatar_verification_status='pending',profile_updated_at=? WHERE id=?",
             (new_url, now_iso(), user["id"]),
         )
+        row = _recompute_user_verification(db, user["id"])
         db.commit()
-        row = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
     if old_url and old_url != new_url:
         delete_product_image(old_url)
-    return {"ok": True, "message": "Foto atualizada e enviada para verificação do Master", "user": user_public(row)}
+    return {"ok": True, "message": "Foto atualizada. Somente a foto voltou para verificação do Master", "user": user_public(row)}
 
 
 @app.put("/api/me/password")
@@ -2808,6 +2919,8 @@ def admin_users(user=Depends(admin_user)):
     with conn() as db:
         rows = db.execute(
             """SELECT u.id,u.name,u.email,u.phone,u.role,u.verified,u.status,u.created_at,u.avatar_url,u.profile_review_status,u.profile_updated_at,
+                      u.email_verified,u.email_verification_source,u.name_verification_status,u.phone_verification_status,u.address_verification_status,u.avatar_verification_status,
+                      u.address_line,u.neighborhood,u.city,u.state,u.postal_code,
                       (SELECT COUNT(*) FROM products p WHERE p.seller_id=u.id) ad_count,
                       (SELECT COALESCE(SUM(po.amount),0) FROM payment_orders po WHERE po.user_id=u.id AND po.status='paid') paid_total
                FROM users u ORDER BY u.created_at DESC LIMIT 500"""
@@ -2815,12 +2928,61 @@ def admin_users(user=Depends(admin_user)):
     return [{**dict(r), "verified": bool(r["verified"])} for r in rows]
 
 
+@app.put("/api/admin/users/{user_id}/verification/{field_name}")
+def admin_verify_user_field(user_id: str, field_name: str, payload: VerifyIn, user=Depends(admin_user)):
+    allowed = {"email", "name", "phone", "address", "avatar"}
+    if field_name not in allowed:
+        raise HTTPException(400, "Campo de verificação inválido")
+    with conn() as db:
+        target = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, "Usuário não encontrado")
+        if payload.verified:
+            if field_name == "name" and not str(_row_value(target, "name", "")).strip():
+                raise HTTPException(400, "O usuário ainda não informou o nome")
+            if field_name == "phone" and not str(_row_value(target, "phone", "")).strip():
+                raise HTTPException(400, "O usuário ainda não informou o telefone")
+            if field_name == "avatar" and not str(_row_value(target, "avatar_url", "")).strip():
+                raise HTTPException(400, "O usuário ainda não enviou uma foto")
+            if field_name == "address" and not _address_is_complete(
+                str(_row_value(target, "address_line", "")), str(_row_value(target, "city", "")),
+                str(_row_value(target, "state", "")), str(_row_value(target, "postal_code", ""))
+            ):
+                raise HTTPException(400, "O endereço ainda está incompleto")
+        if field_name == "email":
+            db.execute(
+                "UPDATE users SET email_verified=?,email_verification_source=? WHERE id=?",
+                (1 if payload.verified else 0, "master" if payload.verified else "", user_id),
+            )
+        else:
+            column = VERIFICATION_FIELDS[field_name]
+            status = "verified" if payload.verified else "unverified"
+            db.execute(f"UPDATE users SET {column}=? WHERE id=?", (status, user_id))
+        row = _recompute_user_verification(db, user_id)
+        db.commit()
+    return {"ok": True, "user": user_public(row)}
+
+
 @app.put("/api/admin/users/{user_id}/verify")
 def admin_verify_user(user_id: str, payload: VerifyIn, user=Depends(admin_user)):
+    # Compatibilidade com versões anteriores do painel: nunca cria selo geral isoladamente.
     with conn() as db:
-        db.execute("UPDATE users SET verified=?,profile_review_status=? WHERE id=?", (1 if payload.verified else 0, "verified" if payload.verified else "unverified", user_id))
-        if db.total_changes == 0:
+        target = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not target:
             raise HTTPException(404, "Usuário não encontrado")
+        if payload.verified:
+            if not str(_row_value(target, "name", "")).strip() or not str(_row_value(target, "phone", "")).strip() or not str(_row_value(target, "avatar_url", "")).strip():
+                raise HTTPException(400, "Complete nome, telefone e foto antes da verificação geral")
+            if not _address_is_complete(str(_row_value(target, "address_line", "")), str(_row_value(target, "city", "")), str(_row_value(target, "state", "")), str(_row_value(target, "postal_code", ""))):
+                raise HTTPException(400, "Complete o endereço antes da verificação geral")
+            db.execute("""UPDATE users SET email_verified=1,email_verification_source='master',
+                name_verification_status='verified',phone_verification_status='verified',
+                address_verification_status='verified',avatar_verification_status='verified' WHERE id=?""", (user_id,))
+        else:
+            db.execute("""UPDATE users SET email_verified=0,email_verification_source='',
+                name_verification_status='unverified',phone_verification_status='unverified',
+                address_verification_status='unverified',avatar_verification_status='unverified' WHERE id=?""", (user_id,))
+        _recompute_user_verification(db, user_id)
         db.commit()
     return {"ok": True}
 

@@ -12,6 +12,19 @@ const formatDate=(value)=>{
 };
 const statusLabel=(status)=>({paid:'Pago',pending:'Pendente',cancelled:'Cancelado',failed:'Falhou'}[status]||status);
 
+const formatPhoneBR=(value)=>{
+  const d=String(value||'').replace(/\D/g,'').slice(0,11);
+  if(d.length<=2) return d;
+  if(d.length<=6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
+  if(d.length<=10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+};
+const verificationMeta=(status)=>({
+  verified:{label:'Verificado',tone:'verified'},
+  pending:{label:'Em análise',tone:'pending'},
+  unverified:{label:'Não verificado',tone:'unverified'}
+}[status]||{label:'Não verificado',tone:'unverified'});
+
 export default function Dashboard(){
  const {refreshUser}=useAuth();
  const [activeTab,setActiveTab]=useState('overview');
@@ -39,7 +52,7 @@ export default function Dashboard(){
  const load=()=>Promise.all([api('/api/me/dashboard'),api('/api/plans'),api('/api/me/payments'),api('/api/me/partner-benefit'),api('/api/me')])
   .then(([dashboard, planList, history, partnerData, me])=>{
     setS(dashboard);setPlans(planList);setPayments(history||[]);setPartner(partnerData);setProfile(me);
-    setProfileForm({name:me.name||'',phone:me.phone||'',address_line:me.address_line||'',neighborhood:me.neighborhood||'',city:me.city||'',state:me.state||'',postal_code:me.postal_code||'',current_password:''});
+    setProfileForm({name:me.name||'',phone:formatPhoneBR(me.phone||''),address_line:me.address_line||'',neighborhood:me.neighborhood||'',city:me.city||'',state:me.state||'',postal_code:me.postal_code||'',current_password:''});
   })
   .catch(e=>setErr(e.message));
  useEffect(()=>{load()},[]);
@@ -129,8 +142,16 @@ export default function Dashboard(){
    try{await api(`/api/me/partner-ads/${id}`,{method:'DELETE'});await load()}catch(e){alert(e.message)}
  };
 
- const profileStatusLabel=profile?.verified?'Verificado':profile?.profile_review_status==='pending'?'Aguardando verificação':'Não verificado';
+ const profileStatusLabel=profile?.verified?'Perfil verificado':profile?.profile_review_status==='pending'?'Verificação em andamento':'Perfil incompleto';
  const profileStatusClass=profile?.verified?'verified':profile?.profile_review_status==='pending'?'pending':'unverified';
+ const emailSource=profile?.email_verification_source==='google'?'Google':profile?.email_verification_source==='facebook'?'Facebook':profile?.email_verification_source==='master'?'Master':'';
+ const verificationItems=[
+   {key:'email',label:'E-mail',status:profile?.email_verified?'verified':'unverified',detail:profile?.email_verified?(emailSource?`Confirmado pelo ${emailSource}`:'E-mail confirmado'):'Ainda não confirmado'},
+   {key:'name',label:'Nome',status:profile?.name_verification_status||'unverified',detail:'Identificação do perfil'},
+   {key:'phone',label:'Telefone',status:profile?.phone_verification_status||'unverified',detail:profile?.phone?formatPhoneBR(profile.phone):'Não informado'},
+   {key:'address',label:'Endereço',status:profile?.address_verification_status||'unverified',detail:profile?.city&&profile?.state?`${profile.city} - ${profile.state}`:'Não informado'},
+   {key:'avatar',label:'Foto',status:profile?.avatar_verification_status||'unverified',detail:profile?.avatar_url?'Foto cadastrada':'Não enviada'},
+ ];
 
  const saveProfile=async(e)=>{
    e.preventDefault();
@@ -207,6 +228,12 @@ export default function Dashboard(){
 
   {activeTab==='profile'&&<section className="profile-security-section">
     <div className="profile-security-grid">
+      <div className="profile-card-v2165 profile-verification-card">
+        <div className="profile-card-title"><ShieldCheck/><div><h2>Status de verificação</h2><p>O selo geral só aparece quando todos os dados obrigatórios estiverem verificados.</p></div></div>
+        <div className="profile-verification-list">
+          {verificationItems.map(item=>{const meta=verificationMeta(item.status);return <div className="profile-verification-item" key={item.key}><div><b>{item.label}</b><small>{item.detail}</small></div><span className={`field-verification-pill ${meta.tone}`}>{meta.tone==='verified'?<BadgeCheck/>:meta.tone==='pending'?<Clock3/>:<ShieldCheck/>}{meta.label}</span></div>})}
+        </div>
+      </div>
       <div className="profile-card-v2165 profile-photo-card">
         <div className="profile-card-title"><Camera/><div><h2>Foto do perfil</h2><p>JPG, PNG ou WEBP até 5 MB.</p></div></div>
         <div className="profile-photo-preview">{profilePhotoPreview||profile?.avatar_url?<img src={profilePhotoPreview||imageUrl(profile?.avatar_url)} alt="Foto do perfil"/>:<UserRound/>}</div>
@@ -219,7 +246,7 @@ export default function Dashboard(){
         <div className="profile-card-title"><UserRound/><div><h2>Dados pessoais</h2><p>Todos os dados alterados passam por nova verificação.</p></div></div>
         <div className="profile-form-grid">
           <label>Nome completo<input value={profileForm.name} onChange={e=>setProfileForm({...profileForm,name:e.target.value})} required/></label>
-          <label>Telefone com DDD<input inputMode="tel" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:e.target.value})} placeholder="(45) 99999-9999"/></label>
+          <label>Telefone com DDD<input inputMode="tel" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:formatPhoneBR(e.target.value)})} placeholder="(45) 99999-9999"/></label>
           <label className="span-2">Endereço<input value={profileForm.address_line} onChange={e=>setProfileForm({...profileForm,address_line:e.target.value})} placeholder="Rua, número e complemento"/></label>
           <label>Bairro<input value={profileForm.neighborhood} onChange={e=>setProfileForm({...profileForm,neighborhood:e.target.value})}/></label>
           <label>Cidade<input value={profileForm.city} onChange={e=>setProfileForm({...profileForm,city:e.target.value})}/></label>
@@ -227,7 +254,7 @@ export default function Dashboard(){
           <label>CEP<input inputMode="numeric" value={profileForm.postal_code} onChange={e=>setProfileForm({...profileForm,postal_code:e.target.value})} placeholder="00000-000"/></label>
           {profile?.has_password?<label className="span-2 confirmation-field"><ShieldCheck/>Senha atual para confirmar<input type="password" value={profileForm.current_password} onChange={e=>setProfileForm({...profileForm,current_password:e.target.value})} placeholder="Digite sua senha atual" required/></label>:<div className="span-2 social-profile-confirm"><ShieldCheck/><div><b>Conta conectada com {profile?.auth_provider==='google'?'Google':'Facebook'}</b><span>Alterações sensíveis usam sua sessão social recente. Se ela tiver expirado, entre novamente pelo provedor para confirmar.</span></div></div>}
         </div>
-        <div className="profile-verification-banner"><ShieldCheck/><div><b>Verificação obrigatória</b><span>Ao salvar nome, telefone, endereço ou foto, o selo fica pendente até aprovação no Painel Master. {profile?.email_verified?'Seu e-mail já foi confirmado pelo provedor de login.':''}</span></div></div>
+        <div className="profile-verification-banner"><ShieldCheck/><div><b>Verificação por campo</b><span>Somente o dado que você alterar volta para análise. O que já estiver verificado permanece aprovado. {profile?.email_verified?`Seu e-mail já está confirmado${emailSource?` pelo ${emailSource}`:''}.`:''}</span></div></div>
         <button className="primary" disabled={profileBusy}>{profileBusy?'Salvando...':'Salvar e enviar para verificação'}</button>
       </form>
 

@@ -10,6 +10,15 @@ const money=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'B
 const date=v=>v?new Date(v).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}):'—';
 const statusLabel=s=>({active:'Ativo',blocked:'Bloqueado',paused:'Pausado',rejected:'Rejeitado',sold:'Vendido',open:'Aberta',resolved:'Resolvida',paid:'Pago',pending:'Pendente',cancelled:'Cancelado'}[s]||s);
 
+const verificationLabel=s=>({verified:'Verificado',pending:'Em análise',unverified:'Não verificado'}[s]||'Não verificado');
+const verificationTone=s=>s==='verified'?'verified':s==='pending'?'pending':'unverified';
+const formatPhoneBR=(value)=>{
+  const d=String(value||'').replace(/\D/g,'').slice(0,11);
+  if(d.length===11)return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+  if(d.length===10)return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return value||'';
+};
+
 function PlanEditor({plan,onSaved}){
   const [form,setForm]=useState(()=>({
     name:plan.name||'', amount:plan.amount??0, days:plan.days??0, active:Boolean(plan.active),
@@ -326,7 +335,13 @@ export default function Admin(){
 
  const setProductStatus=async(id,status)=>{try{await api(`/api/admin/products/${id}/status`,{method:'PUT',body:JSON.stringify({status})});load()}catch(e){alert(e.message)}};
  const deleteProduct=async p=>{if(!confirm(`Excluir definitivamente o anúncio “${p.title}”?`))return;try{await api(`/api/admin/products/${p.id}`,{method:'DELETE'});load()}catch(e){alert(e.message)}};
- const verify=async u=>{try{await api(`/api/admin/users/${u.id}/verify`,{method:'PUT',body:JSON.stringify({verified:!u.verified})});load()}catch(e){alert(e.message)}};
+ const verifyField=async(u,field)=>{
+   const status=field==='email'?(u.email_verified?'verified':'unverified'):(u[`${field}_verification_status`]||'unverified');
+   const next=status!=='verified';
+   const label={email:'e-mail',name:'nome',phone:'telefone',address:'endereço',avatar:'foto'}[field]||field;
+   if(!confirm(`${next?'Aprovar':'Remover a verificação de'} ${label} de ${u.name}?`))return;
+   try{await api(`/api/admin/users/${u.id}/verification/${field}`,{method:'PUT',body:JSON.stringify({verified:next})});load()}catch(e){alert(e.message)}
+ };
  const setUserStatus=async(u,status)=>{if(status==='blocked'&&!confirm(`Bloquear a conta de ${u.name}?`))return;try{await api(`/api/admin/users/${u.id}/status`,{method:'PUT',body:JSON.stringify({status})});load()}catch(e){alert(e.message)}};
  const deleteUser=async u=>{if(!confirm(`EXCLUIR definitivamente a conta de ${u.name}? Os anúncios e dados relacionados serão removidos.`))return;try{await api(`/api/admin/users/${u.id}`,{method:'DELETE'});load()}catch(e){alert(e.message)}};
  const resolve=async id=>{try{await api(`/api/admin/reports/${id}/resolve`,{method:'PUT'});load()}catch(e){alert(e.message)}};
@@ -359,7 +374,7 @@ export default function Admin(){
    </div>
   </>}
 
-  {tab==='users'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Conta</th><th>Tipo</th><th>Anúncios</th><th>Pagamentos</th><th>Verificação</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map(u=><tr key={u.id}><td><div className="master-user-cell">{u.avatar_url?<img src={imageUrl(u.avatar_url)} alt={u.name}/>:<span className="master-user-avatar-fallback">{(u.name||'U').charAt(0).toUpperCase()}</span>}<div><b>{u.name}</b><small>{u.email}<br/>{u.phone||'Sem telefone'}</small></div></div></td><td><span className={`master-role-badge ${u.role==='admin'?'owner':''}`}>{u.role==='admin'?'Master proprietário':'Usuário'}</span></td><td>{u.ad_count}</td><td>{money(u.paid_total)}</td><td><div className="master-user-verification"><span className={`master-status ${u.status}`}>{statusLabel(u.status)}</span>{u.profile_review_status==='pending'&&<span className="master-review-pending">Perfil aguardando revisão</span>}</div></td><td><div className="master-actions"><button className={`verify-btn ${u.verified?'on':''}`} onClick={()=>verify(u)}><BadgeCheck/>{u.verified?'Verificado':u.profile_review_status==='pending'?'Aprovar perfil':'Verificar'}</button>{u.role!=='admin'&&(u.status==='active'?<button onClick={()=>setUserStatus(u,'blocked')}><Ban/>Bloquear</button>:<button onClick={()=>setUserStatus(u,'active')}><CheckCircle2/>Ativar</button>)}{u.role!=='admin'&&<button className="danger-lite-btn" onClick={()=>deleteUser(u)}><Trash2/>Excluir</button>}</div></td></tr>)}</tbody></table></div>}
+  {tab==='users'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Conta</th><th>Tipo</th><th>Anúncios</th><th>Pagamentos</th><th>Verificação por dado</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map(u=>{const fields=[['email','E-mail',u.email_verified?'verified':'unverified'],['name','Nome',u.name_verification_status||'unverified'],['phone','Telefone',u.phone_verification_status||'unverified'],['address','Endereço',u.address_verification_status||'unverified'],['avatar','Foto',u.avatar_verification_status||'unverified']];return <tr key={u.id}><td><div className="master-user-cell">{u.avatar_url?<img src={imageUrl(u.avatar_url)} alt={u.name}/>:<span className="master-user-avatar-fallback">{(u.name||'U').charAt(0).toUpperCase()}</span>}<div><b>{u.name}</b><small>{u.email}<br/>{u.phone?formatPhoneBR(u.phone):'Sem telefone'}</small></div></div></td><td><span className={`master-role-badge ${u.role==='admin'?'owner':''}`}>{u.role==='admin'?'Master proprietário':'Usuário'}</span></td><td>{u.ad_count}</td><td>{money(u.paid_total)}</td><td><div className="master-user-verification-detail"><div className="master-verification-top"><span className={`master-status ${u.status}`}>{statusLabel(u.status)}</span><span className={`master-profile-overall ${u.verified?'verified':u.profile_review_status==='pending'?'pending':'unverified'}`}>{u.verified?'Perfil verificado':u.profile_review_status==='pending'?'Revisão em andamento':'Perfil incompleto'}</span></div><div className="master-field-verification-grid">{fields.map(([field,label,status])=><button type="button" key={field} className={`master-field-verify ${verificationTone(status)}`} onClick={()=>verifyField(u,field)} title={field==='email'&&u.email_verification_source?`Origem: ${u.email_verification_source}`:`${label}: ${verificationLabel(status)}`}><span>{label}</span><b>{verificationLabel(status)}</b></button>)}</div></div></td><td><div className="master-actions">{u.role!=='admin'&&(u.status==='active'?<button onClick={()=>setUserStatus(u,'blocked')}><Ban/>Bloquear</button>:<button onClick={()=>setUserStatus(u,'active')}><CheckCircle2/>Ativar</button>)}{u.role!=='admin'&&<button className="danger-lite-btn" onClick={()=>deleteUser(u)}><Trash2/>Excluir</button>}</div></td></tr>})}</tbody></table></div>}
 
   {tab==='products'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Anúncio</th><th>Vendedor</th><th>Local</th><th>Status</th><th>Destaque</th><th>Ações</th></tr></thead><tbody>{filteredProducts.map(p=><tr key={p.id}><td><Link to={`/produto/${p.id}`}><b>{p.title}</b></Link><small>{money(p.price)} • {p.views||0} visualizações</small></td><td><b>{p.seller_name||p.seller?.name||'—'}</b><small>{p.seller_email||''}</small></td><td>{p.city}/{p.state}</td><td><select value={p.status} onChange={e=>setProductStatus(p.id,e.target.value)}><option value="active">Ativo</option><option value="paused">Pausado</option><option value="rejected">Rejeitado</option><option value="sold">Vendido</option></select></td><td>{p.featured_active?<span className="master-status paid">Ativo</span>:<span className="master-status neutral">Normal</span>}</td><td><div className="master-actions"><Link className="master-link-btn" to={`/produto/${p.id}`}><Eye/>Abrir</Link><button className="danger-lite-btn" onClick={()=>deleteProduct(p)}><Trash2/>Excluir</button></div></td></tr>)}</tbody></table></div>}
 
