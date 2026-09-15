@@ -167,7 +167,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.18.0")
+app = FastAPI(title="ClassificaJá API", version="2.18.2")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -683,6 +683,7 @@ def init_db():
               name TEXT NOT NULL,
               amount REAL NOT NULL DEFAULT 0,
               days INTEGER NOT NULL DEFAULT 0,
+              ad_limit INTEGER NOT NULL DEFAULT 1,
               boost INTEGER NOT NULL DEFAULT 0,
               free INTEGER NOT NULL DEFAULT 0,
               active INTEGER NOT NULL DEFAULT 1,
@@ -794,6 +795,8 @@ def init_db():
         ensure_column(db, "products", "featured_until", "TEXT")
         ensure_column(db, "products", "boost_level", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "products", "updated_at", "TEXT")
+        plan_limit_column_missing = "ad_limit" not in table_columns(db, "plan_settings")
+        ensure_column(db, "plan_settings", "ad_limit", "INTEGER NOT NULL DEFAULT 1")
         db.execute("""CREATE TABLE IF NOT EXISTS payment_integrations (
             provider TEXT PRIMARY KEY,
             enabled INTEGER NOT NULL DEFAULT 0,
@@ -860,18 +863,20 @@ def init_db():
             payment_order_id TEXT,
             product_id TEXT,
             source_key TEXT UNIQUE,
+            expires_at TEXT,
             selected_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""")
+        ensure_column(db, "publish_entitlements", "expires_at", "TEXT")
         legacy_access_rows = db.execute("SELECT * FROM publish_plan_access").fetchall()
         for legacy_access in legacy_access_rows:
             legacy_data = dict(legacy_access)
             source_key = f"legacy:{legacy_data['user_id']}"
             db.execute(
-                """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,selected_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_key) DO NOTHING""",
+                """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,expires_at,selected_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_key) DO NOTHING""",
                 (str(uuid.uuid4()), legacy_data["user_id"], legacy_data["plan_code"], legacy_data.get("status") or "ready",
-                 legacy_data.get("payment_order_id"), legacy_data.get("product_id"), source_key,
+                 legacy_data.get("payment_order_id"), legacy_data.get("product_id"), source_key, None,
                  legacy_data.get("selected_at") or now_iso(), legacy_data.get("updated_at") or now_iso()),
             )
         db.execute("""CREATE TABLE IF NOT EXISTS product_view_events (
@@ -935,15 +940,31 @@ def init_db():
 
         for code, plan in PLANS.items():
             db.execute(
-                """INSERT OR IGNORE INTO plan_settings(code,name,amount,days,boost,free,active,badge,tagline,features_json,limitations_json,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT OR IGNORE INTO plan_settings(code,name,amount,days,ad_limit,boost,free,active,badge,tagline,features_json,limitations_json,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     code, plan.get("name", code), float(plan.get("amount") or 0), int(plan.get("days") or 0),
-                    int(plan.get("boost") or 0), 1 if plan.get("free") else 0, 1, plan.get("badge", ""),
+                    int(plan.get("ad_limit") or 1), int(plan.get("boost") or 0), 1 if plan.get("free") else 0, 1, plan.get("badge", ""),
                     plan.get("tagline", ""), json.dumps(plan.get("features", []), ensure_ascii=False),
                     json.dumps(plan.get("limitations", []), ensure_ascii=False), now_iso(),
                 ),
             )
+        # V2.18.1 — migração única dos limites por plano. Depois da primeira
+        # execução os valores ficam editáveis pelo Painel Master e não são
+        # sobrescritos novamente em cada inicialização.
+        if plan_limit_column_missing:
+            for code, plan in PLANS.items():
+                db.execute(
+                    "UPDATE plan_settings SET ad_limit=?,updated_at=? WHERE code=?",
+                    (max(1, int(plan.get("ad_limit") or 1)), now_iso(), code),
+                )
+        # V2.18.2 — Premium passa de 15 para 10 anúncios. Ajustamos apenas
+        # instalações que ainda estejam exatamente no padrão anterior (15),
+        # preservando eventuais limites personalizados pelo administrador.
+        db.execute(
+            "UPDATE plan_settings SET ad_limit=10,updated_at=? WHERE code='boost_30' AND ad_limit=15",
+            (now_iso(),),
+        )
         # Regra comercial atual do Grátis: 1 anúncio por conta e 7 dias.
         # Atualiza instalações antigas que ainda tinham duração 0.
         db.execute(
@@ -978,6 +999,27 @@ def init_db():
                    ON CONFLICT(user_id) DO NOTHING""",
                 (data["seller_id"], data["id"], data.get("created_at") or now_iso()),
             )
+
+        # V2.18.1 — converte planos pagos ainda vigentes de versões anteriores
+        # em acesso persistente da conta. Assim o cliente não perde o plano ao
+        # excluir o anúncio que originalmente recebeu o destaque.
+        paid_active_rows = db.execute(
+            """SELECT id,seller_id,plan_code,boost_level,plan_expires_at,featured_until
+               FROM products
+               WHERE COALESCE(boost_level,0)>=2
+                 AND ((plan_expires_at IS NOT NULL AND plan_expires_at>?)
+                   OR (featured_until IS NOT NULL AND featured_until>?))""",
+            (now_iso(), now_iso()),
+        ).fetchall()
+        for paid_row in paid_active_rows:
+            data = dict(paid_row)
+            plan_code = data.get("plan_code")
+            if plan_code not in {"boost_15", "boost_30"}:
+                plan_code = "boost_30" if int(data.get("boost_level") or 0) >= 3 else "boost_15"
+            expiry_values = [x for x in (data.get("plan_expires_at"), data.get("featured_until")) if _parse_iso_dt(x)]
+            expires_at = max(expiry_values, key=lambda x: _parse_iso_dt(x)) if expiry_values else None
+            if expires_at:
+                activate_account_plan_entitlement(db, data["seller_id"], plan_code, expires_at, None, data["id"])
 
         # Production admin comes from environment variables; demo data stays local-only by default.
         admin_email = MASTER_EMAIL
@@ -1169,6 +1211,7 @@ class AdminPlanIn(BaseModel):
     name: Optional[str] = None
     amount: Optional[float] = None
     days: Optional[int] = None
+    ad_limit: Optional[int] = None
     active: Optional[bool] = None
     badge: Optional[str] = None
     tagline: Optional[str] = None
@@ -1209,6 +1252,7 @@ PLANS = {
         "name": "Plano Grátis",
         "amount": 0.0,
         "days": 7,
+        "ad_limit": 1,
         "boost": 0,
         "free": True,
         "badge": "Grátis",
@@ -1231,6 +1275,7 @@ PLANS = {
         "name": "Destaque Plus 15 dias",
         "amount": 34.90,
         "days": 15,
+        "ad_limit": 5,
         "boost": 2,
         "free": False,
         "badge": "Mais vendido",
@@ -1248,6 +1293,7 @@ PLANS = {
         "name": "Destaque Premium 30 dias",
         "amount": 59.90,
         "days": 30,
+        "ad_limit": 10,
         "boost": 3,
         "free": False,
         "badge": "Mais completo",
@@ -1295,6 +1341,7 @@ def plan_row_to_dict(row):
         "name": data["name"],
         "amount": float(data.get("amount") or 0),
         "days": int(data.get("days") or 0),
+        "ad_limit": max(1, int(data.get("ad_limit") or 1)),
         "boost": int(data.get("boost") or 0),
         "free": bool(data.get("free")),
         "active": bool(data.get("active")),
@@ -1326,23 +1373,23 @@ def get_plan(code: str, db=None, include_inactive=False):
     return next((p for p in plans if p.get("code") == code), None)
 
 
-def set_publish_plan_access(db, user_id: str, plan_code: str, status: str = "ready", payment_order_id: str | None = None, product_id: str | None = None):
+def set_publish_plan_access(db, user_id: str, plan_code: str, status: str = "ready", payment_order_id: str | None = None, product_id: str | None = None, expires_at: str | None = None):
     """Create/update one entitlement without destroying other paid purchases."""
     now = now_iso()
     source_key = f"payment:{payment_order_id}" if payment_order_id else (f"free:{user_id}" if plan_code == "boost_7" else f"manual:{user_id}:{uuid.uuid4().hex}")
     existing = db.execute("SELECT id FROM publish_entitlements WHERE source_key=?", (source_key,)).fetchone()
     if existing:
         db.execute(
-            "UPDATE publish_entitlements SET plan_code=?,status=?,product_id=?,updated_at=? WHERE id=?",
-            (plan_code, status, product_id, now, existing["id"]),
+            "UPDATE publish_entitlements SET plan_code=?,status=?,product_id=?,expires_at=?,updated_at=? WHERE id=?",
+            (plan_code, status, product_id, expires_at, now, existing["id"]),
         )
         entitlement_id = existing["id"]
     else:
         entitlement_id = str(uuid.uuid4())
         db.execute(
-            """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,selected_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (entitlement_id, user_id, plan_code, status, payment_order_id, product_id, source_key, now, now),
+            """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,expires_at,selected_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (entitlement_id, user_id, plan_code, status, payment_order_id, product_id, source_key, expires_at, now, now),
         )
     # Keep the legacy table synchronized for older deployments/frontends.
     db.execute(
@@ -1355,28 +1402,344 @@ def set_publish_plan_access(db, user_id: str, plan_code: str, status: str = "rea
     )
     return entitlement_id
 
-def get_publish_plan_access(db, user_id: str):
+
+def activate_account_plan_entitlement(db, user_id: str, plan_code: str, expires_at: str, payment_order_id: str | None = None, product_id: str | None = None):
+    """Persist an account-level paid plan so deleting its first ad does not erase access."""
+    if not expires_at:
+        return None
+    now = now_iso()
+    source_key = f"account:{user_id}:{plan_code}"
+    row = db.execute("SELECT * FROM publish_entitlements WHERE source_key=?", (source_key,)).fetchone()
+    if row:
+        data = dict(row)
+        current_exp = _parse_iso_dt(data.get("expires_at"))
+        incoming_exp = _parse_iso_dt(expires_at)
+        best_exp = expires_at
+        if current_exp and incoming_exp and current_exp > incoming_exp:
+            best_exp = data.get("expires_at")
+        db.execute(
+            """UPDATE publish_entitlements
+               SET status='active',expires_at=?,payment_order_id=COALESCE(?,payment_order_id),
+                   product_id=COALESCE(?,product_id),updated_at=?
+               WHERE id=?""",
+            (best_exp, payment_order_id, product_id, now, data["id"]),
+        )
+        return data["id"]
+    entitlement_id = str(uuid.uuid4())
+    db.execute(
+        """INSERT INTO publish_entitlements(id,user_id,plan_code,status,payment_order_id,product_id,source_key,expires_at,selected_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (entitlement_id, user_id, plan_code, "active", payment_order_id, product_id, source_key, expires_at, now, now),
+    )
+    return entitlement_id
+
+def _parse_iso_dt(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def _stored_ads_count(db, user_id: str) -> int:
+    """Count listings that still consume database/storage space.
+
+    Deleted listings are physically removed and therefore free a slot. Paused,
+    sold and expired listings still occupy storage and deliberately keep using a
+    slot until the owner deletes them. This prevents users from bypassing the
+    quota simply by pausing an ad.
+    """
+    row = db.execute("SELECT COUNT(*) n FROM products WHERE seller_id=?", (user_id,)).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def _active_product_plan(db, user_id: str):
+    """Return the strongest still-valid account plan inferred from listings.
+
+    V2.18 and older attached the paid plan to the first/individual listing. For
+    V2.18.1 we treat a valid paid listing as proof that the account plan is
+    active until its expiration. This migrates existing customers without
+    asking them to pay again.
+    """
+    now = now_iso()
+    rows = db.execute(
+        """SELECT plan_code,plan_expires_at,featured_until,boost_level
+           FROM products
+           WHERE seller_id=?
+             AND ((plan_expires_at IS NOT NULL AND plan_expires_at>?)
+               OR (featured_until IS NOT NULL AND featured_until>?))
+           ORDER BY boost_level DESC, COALESCE(plan_expires_at,featured_until) DESC""",
+        (user_id, now, now),
+    ).fetchall()
+    best = None
+    for row in rows:
+        data = dict(row)
+        plan_code = data.get("plan_code")
+        if not plan_code:
+            legacy_meta = plan_meta_from_boost(data.get("boost_level")) or {}
+            plan_code = legacy_meta.get("code")
+        plan = get_plan(plan_code, db, include_inactive=True)
+        if not plan:
+            continue
+        expires_candidates = [
+            x for x in (data.get("plan_expires_at"), data.get("featured_until")) if _parse_iso_dt(x)
+        ]
+        expires_at = max(expires_candidates, key=lambda x: _parse_iso_dt(x)) if expires_candidates else None
+        expires_dt = _parse_iso_dt(expires_at)
+        if not expires_dt or expires_dt <= now_dt():
+            continue
+        candidate = {
+            "plan": plan,
+            "expires_at": expires_at,
+            "boost": int(plan.get("boost") or 0),
+        }
+        if not best:
+            best = candidate
+            continue
+        if candidate["boost"] > best["boost"]:
+            best = candidate
+        elif candidate["boost"] == best["boost"] and expires_dt > (_parse_iso_dt(best.get("expires_at")) or now_dt()):
+            best = candidate
+    return best
+
+
+def _ready_entitlement_plan(db, user_id: str):
+    rows = db.execute(
+        "SELECT * FROM publish_entitlements WHERE user_id=? AND status='ready' ORDER BY selected_at ASC",
+        (user_id,),
+    ).fetchall()
+    best = None
+    for row in rows:
+        data = dict(row)
+        plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+        if not plan:
+            continue
+        candidate = {"row": data, "plan": plan, "boost": int(plan.get("boost") or 0)}
+        if not best or candidate["boost"] > best["boost"]:
+            best = candidate
+    return best, len(rows)
+
+
+def _active_entitlement_plan(db, user_id: str):
+    rows = db.execute(
+        """SELECT * FROM publish_entitlements
+           WHERE user_id=? AND status='active' AND expires_at IS NOT NULL AND expires_at>?
+           ORDER BY expires_at DESC""",
+        (user_id, now_iso()),
+    ).fetchall()
+    best = None
+    for row in rows:
+        data = dict(row)
+        plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+        expires_dt = _parse_iso_dt(data.get("expires_at"))
+        if not plan or not expires_dt or expires_dt <= now_dt():
+            continue
+        candidate = {
+            "row": data,
+            "plan": plan,
+            "boost": int(plan.get("boost") or 0),
+            "expires_at": data.get("expires_at"),
+        }
+        if not best:
+            best = candidate
+            continue
+        if candidate["boost"] > best["boost"]:
+            best = candidate
+        elif candidate["boost"] == best["boost"] and expires_dt > (_parse_iso_dt(best.get("expires_at")) or now_dt()):
+            best = candidate
+    return best
+
+
+def _last_paid_plan_state(db, user_id: str):
+    """Return the most recent paid plan even when it has already expired.
+
+    This is used to enforce renewal/upgrade rules: a former Premium customer
+    cannot downgrade to Plus/Free, while a former Plus customer may renew Plus
+    or upgrade to Premium.
+    """
     row = db.execute(
-        "SELECT * FROM publish_entitlements WHERE user_id=? AND status='ready' ORDER BY selected_at ASC LIMIT 1",
+        """SELECT plan_code,expires_at,updated_at,selected_at
+           FROM publish_entitlements
+           WHERE user_id=? AND plan_code IN ('boost_15','boost_30')
+           ORDER BY COALESCE(expires_at,updated_at,selected_at) DESC
+           LIMIT 1""",
         (user_id,),
     ).fetchone()
-    free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
-    ready_count = db.execute("SELECT COUNT(*) n FROM publish_entitlements WHERE user_id=? AND status='ready'", (user_id,)).fetchone()["n"]
-    if not row:
-        return {"ready": False, "status": "none", "plan": None, "free_used": free_used, "free_available": not free_used, "ready_count": int(ready_count or 0)}
-    data = dict(row)
-    plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+    if row:
+        data = dict(row)
+        plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+        if plan:
+            return {"plan": plan, "expires_at": data.get("expires_at"), "source": "history_entitlement"}
+
+    row = db.execute(
+        """SELECT plan_code,paid_at,created_at
+           FROM payment_orders
+           WHERE user_id=? AND status='paid' AND plan_code IN ('boost_15','boost_30')
+           ORDER BY COALESCE(paid_at,created_at) DESC
+           LIMIT 1""",
+        (user_id,),
+    ).fetchone()
+    if row:
+        data = dict(row)
+        plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+        if plan:
+            return {"plan": plan, "expires_at": None, "source": "history_payment"}
+
+    row = db.execute(
+        """SELECT plan_code,plan_expires_at,featured_until,created_at
+           FROM products
+           WHERE seller_id=? AND plan_code IN ('boost_15','boost_30')
+           ORDER BY COALESCE(plan_expires_at,featured_until,created_at) DESC
+           LIMIT 1""",
+        (user_id,),
+    ).fetchone()
+    if row:
+        data = dict(row)
+        plan = get_plan(data.get("plan_code"), db, include_inactive=True)
+        if plan:
+            return {
+                "plan": plan,
+                "expires_at": data.get("plan_expires_at") or data.get("featured_until"),
+                "source": "history_product",
+            }
+    return None
+
+
+def _allowed_paid_plan_codes(plan_code: str | None):
+    if plan_code == "boost_30":
+        return ["boost_30"]
+    if plan_code == "boost_15":
+        return ["boost_15", "boost_30"]
+    return ["boost_15", "boost_30"]
+
+
+def _plan_action_flags(plan_code: str | None):
+    allowed = _allowed_paid_plan_codes(plan_code)
     return {
-        "ready": bool(plan),
-        "status": data.get("status") or "none",
-        "entitlement_id": data.get("id"),
-        "plan": plan,
-        "payment_order_id": data.get("payment_order_id"),
-        "product_id": data.get("product_id"),
-        "selected_at": data.get("selected_at"),
+        "allowed_paid_plan_codes": allowed,
+        "can_renew": plan_code in {"boost_15", "boost_30"},
+        "can_upgrade": plan_code == "boost_15",
+        "renew_plan_code": plan_code if plan_code in {"boost_15", "boost_30"} else None,
+        "upgrade_plan_code": "boost_30" if plan_code == "boost_15" else None,
+    }
+
+
+def get_publish_plan_access(db, user_id: str):
+    """Resolve the account publishing plan and its listing quota.
+
+    Paid plans are account-level while valid. Existing V2.18 listings are used
+    to infer the active plan, so customers who already show Plus/Premium in the
+    dashboard can continue publishing without selecting/paying for the plan on
+    every ad.
+    """
+    free_used = bool(db.execute("SELECT 1 FROM free_plan_usage WHERE user_id=?", (user_id,)).fetchone())
+    ads_used = _stored_ads_count(db, user_id)
+    active_product = _active_product_plan(db, user_id)
+    active_entitlement = _active_entitlement_plan(db, user_id)
+    entitlement, ready_count = _ready_entitlement_plan(db, user_id)
+
+    chosen = None
+    source = None
+    entitlement_row = None
+    expires_at = None
+
+    active = None
+    if active_product:
+        active = {**active_product, "source": "active_plan"}
+    if active_entitlement:
+        if not active:
+            active = {**active_entitlement, "source": "active_entitlement"}
+        else:
+            ent_boost = int(active_entitlement.get("boost") or 0)
+            prod_boost = int(active.get("boost") or 0)
+            ent_exp = _parse_iso_dt(active_entitlement.get("expires_at")) or now_dt()
+            prod_exp = _parse_iso_dt(active.get("expires_at")) or now_dt()
+            if ent_boost > prod_boost or (ent_boost == prod_boost and ent_exp > prod_exp):
+                active = {**active_entitlement, "source": "active_entitlement"}
+
+    if active:
+        chosen = active["plan"]
+        source = active.get("source") or "active_plan"
+        expires_at = active.get("expires_at")
+
+    if entitlement:
+        ent_plan = entitlement["plan"]
+        active_limit = max(1, int(chosen.get("ad_limit") or 1)) if chosen else 0
+        active_remaining = max(0, active_limit - ads_used) if chosen else 0
+        # A queued purchase activates when there is no active plan, when it is
+        # an upgrade, or when the current plan has no remaining slots.
+        if (
+            not chosen
+            or int(ent_plan.get("boost") or 0) > int(chosen.get("boost") or 0)
+            or active_remaining <= 0
+        ):
+            chosen = ent_plan
+            source = "entitlement"
+            entitlement_row = entitlement["row"]
+            expires_at = None  # starts when the first ad is published
+
+    if not chosen:
+        last_paid = _last_paid_plan_state(db, user_id)
+        if last_paid:
+            historical_plan = last_paid["plan"]
+            historical_code = historical_plan.get("code")
+            flags = _plan_action_flags(historical_code)
+            return {
+                "ready": False,
+                "status": "expired",
+                "plan": historical_plan,
+                "ad_limit": max(1, int(historical_plan.get("ad_limit") or 1)),
+                "ads_used": ads_used,
+                "ads_remaining": 0,
+                "expires_at": last_paid.get("expires_at"),
+                "source": last_paid.get("source"),
+                "free_used": free_used,
+                "free_available": False,
+                "ready_count": int(ready_count or 0),
+                **flags,
+            }
+        return {
+            "ready": False,
+            "status": "none",
+            "plan": None,
+            "ad_limit": 0,
+            "ads_used": ads_used,
+            "ads_remaining": 0,
+            "expires_at": None,
+            "source": None,
+            "free_used": free_used,
+            "free_available": not free_used,
+            "ready_count": int(ready_count or 0),
+            **_plan_action_flags(None),
+        }
+
+    ad_limit = max(1, int(chosen.get("ad_limit") or 1))
+    ads_remaining = max(0, ad_limit - ads_used)
+    status = "ready" if source == "entitlement" else "active"
+    if ads_remaining <= 0:
+        status = "quota_full"
+
+    return {
+        "ready": ads_remaining > 0,
+        "status": status,
+        "entitlement_id": entitlement_row.get("id") if entitlement_row else None,
+        "plan": chosen,
+        "payment_order_id": entitlement_row.get("payment_order_id") if entitlement_row else None,
+        "product_id": entitlement_row.get("product_id") if entitlement_row else None,
+        "selected_at": entitlement_row.get("selected_at") if entitlement_row else None,
+        "ad_limit": ad_limit,
+        "ads_used": ads_used,
+        "ads_remaining": ads_remaining,
+        "expires_at": expires_at,
+        "source": source,
         "free_used": free_used,
         "free_available": not free_used,
         "ready_count": int(ready_count or 0),
+        **_plan_action_flags(chosen.get("code")),
     }
 
 def create_session(db, user_id: str, provider: str = "local"):
@@ -1559,6 +1922,7 @@ def admin_user(user=Depends(current_user)):
 
 def cleanup_expired_features(db):
     db.execute("UPDATE products SET featured=0,boost_level=0 WHERE featured_until IS NOT NULL AND featured_until<=?", (now_iso(),))
+    db.execute("UPDATE publish_entitlements SET status='used',updated_at=? WHERE status='active' AND expires_at IS NOT NULL AND expires_at<=?", (now_iso(), now_iso()))
     # Anúncios do plano gratuito ficam visíveis somente durante a validade do ciclo grátis.
     db.execute(
         """UPDATE products SET status='paused',updated_at=?
@@ -1679,7 +2043,7 @@ def products_to_dicts(db, rows, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.18.0", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.2", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -2303,14 +2667,25 @@ async def create_product(
 
     # Validate plan/category BEFORE writing any image to disk or Supabase Storage.
     with conn() as db:
-        access_row = db.execute(
-            "SELECT * FROM publish_entitlements WHERE user_id=? AND status='ready' ORDER BY selected_at ASC LIMIT 1",
-            (user["id"],),
-        ).fetchone()
-        if not access_row:
+        access_data = get_publish_plan_access(db, user["id"])
+        if not access_data.get("ready"):
+            if access_data.get("status") == "quota_full" and access_data.get("plan"):
+                quota_plan = access_data["plan"]
+                quota_action = " Exclua um anúncio antigo para liberar uma vaga."
+                if int(quota_plan.get("boost") or 0) < 3:
+                    quota_action = " Exclua um anúncio antigo para liberar uma vaga ou faça upgrade para um plano maior."
+                raise HTTPException(
+                    403,
+                    f"Você atingiu o limite de {access_data.get('ad_limit', 0)} anúncios do plano {quota_plan.get('name', '')}.{quota_action}",
+                )
+            if access_data.get("status") == "expired" and access_data.get("plan"):
+                expired_code = access_data["plan"].get("code")
+                if expired_code == "boost_30":
+                    raise HTTPException(403, "Seu Premium venceu. Renove o Premium para voltar a publicar.")
+                if expired_code == "boost_15":
+                    raise HTTPException(403, "Seu Plus venceu. Renove o Plus ou faça upgrade para Premium para voltar a publicar.")
             raise HTTPException(403, "Escolha um plano antes de publicar o anúncio")
-        access_data = dict(access_row)
-        selected_plan = get_plan(access_data.get("plan_code"), db, include_inactive=True)
+        selected_plan = access_data.get("plan")
         if not selected_plan:
             raise HTTPException(403, "O plano selecionado não está mais disponível")
         if not db.execute("SELECT 1 FROM categories WHERE slug=?", (category_slug,)).fetchone():
@@ -2333,15 +2708,41 @@ async def create_product(
         image_url = gallery_urls[0] if gallery_urls else None
         pid = str(uuid.uuid4())
         with conn() as db:
-            # Recheck/lock the entitlement as close to consumption as possible.
-            access_row = db.execute("SELECT * FROM publish_entitlements WHERE id=? AND user_id=? AND status='ready'", (access_data["id"], user["id"])).fetchone()
-            if not access_row:
-                raise HTTPException(409, "Este plano já foi utilizado. Atualize a página e tente novamente.")
+            # Revalida plano e cota o mais perto possível da gravação. Isso
+            # protege contra duas publicações simultâneas consumindo a mesma vaga.
+            if USE_POSTGRES:
+                db.execute("SELECT id FROM users WHERE id=? FOR UPDATE", (user["id"],)).fetchone()
+            access_data = get_publish_plan_access(db, user["id"])
+            if not access_data.get("ready"):
+                if access_data.get("status") == "quota_full" and access_data.get("plan"):
+                    quota_plan = access_data["plan"]
+                    quota_action = " Exclua um anúncio antigo para liberar uma vaga."
+                    if int(quota_plan.get("boost") or 0) < 3:
+                        quota_action = " Exclua um anúncio antigo para liberar uma vaga ou faça upgrade para um plano maior."
+                    raise HTTPException(
+                        409,
+                        f"Limite de {access_data.get('ad_limit', 0)} anúncios do plano {quota_plan.get('name', '')} atingido.{quota_action}",
+                    )
+                if access_data.get("status") == "expired" and access_data.get("plan"):
+                    expired_code = access_data["plan"].get("code")
+                    if expired_code == "boost_30":
+                        raise HTTPException(409, "Seu Premium venceu. Renove o Premium para voltar a publicar.")
+                    if expired_code == "boost_15":
+                        raise HTTPException(409, "Seu Plus venceu. Renove o Plus ou faça upgrade para Premium para voltar a publicar.")
+                raise HTTPException(409, "Seu plano não está mais disponível para nova publicação. Atualize a página e tente novamente.")
+            selected_plan = access_data.get("plan")
+            if not selected_plan:
+                raise HTTPException(409, "Plano indisponível")
             created_at = now_iso()
             boost_level = int(selected_plan.get("boost") or 0)
             is_featured = 1 if boost_level > 0 else 0
             plan_days = max(0, int(selected_plan.get("days") or 0))
-            plan_expires_at = (now_dt() + timedelta(days=plan_days)).isoformat() if plan_days else None
+            # Se o usuário já tem um plano de conta ativo, novos anúncios usam
+            # o mesmo vencimento. Uma compra ainda não iniciada começa no
+            # primeiro anúncio publicado.
+            plan_expires_at = access_data.get("expires_at")
+            if not plan_expires_at:
+                plan_expires_at = (now_dt() + timedelta(days=plan_days)).isoformat() if plan_days else None
             featured_until = plan_expires_at if is_featured else None
             db.execute(
                 """INSERT INTO products(id,seller_id,title,description,price,category_slug,city,state,neighborhood,condition,image_url,image_urls,original_price,payment_mode,status,featured,featured_until,boost_level,plan_code,plan_expires_at,created_at,updated_at)
@@ -2354,9 +2755,22 @@ async def create_product(
                        ON CONFLICT(user_id) DO NOTHING""",
                     (user["id"], pid, created_at),
                 )
-            db.execute("UPDATE publish_entitlements SET status='used',product_id=?,updated_at=? WHERE id=?", (pid, created_at, access_data["id"]))
-            # Legacy mirror keeps old clients consistent with the consumed entitlement.
-            db.execute("UPDATE publish_plan_access SET status='used',product_id=?,updated_at=? WHERE user_id=?", (pid, created_at, user["id"]))
+            if access_data.get("entitlement_id"):
+                db.execute(
+                    "UPDATE publish_entitlements SET status='used',product_id=?,updated_at=? WHERE id=? AND status='ready'",
+                    (pid, created_at, access_data["entitlement_id"]),
+                )
+                # Legacy mirror keeps old clients consistent with the consumed entitlement.
+                db.execute("UPDATE publish_plan_access SET status='used',product_id=?,updated_at=? WHERE user_id=?", (pid, created_at, user["id"]))
+            if not selected_plan.get("free") and plan_expires_at:
+                activate_account_plan_entitlement(
+                    db,
+                    user["id"],
+                    selected_plan.get("code"),
+                    plan_expires_at,
+                    access_data.get("payment_order_id"),
+                    pid,
+                )
             if access_data.get("payment_order_id"):
                 db.execute("UPDATE payment_orders SET product_id=? WHERE id=?", (pid, access_data["payment_order_id"]))
             db.execute(
@@ -2586,6 +3000,7 @@ def my_dashboard(user=Depends(current_user)):
                ORDER BY boost_level DESC, featured_until ASC""",
             (user["id"], now_iso()),
         ).fetchall()
+        publish_access = get_publish_plan_access(db, user["id"])
     featured_ads = []
     highest_boost = 0
     next_expiration = None
@@ -2620,7 +3035,10 @@ def my_dashboard(user=Depends(current_user)):
             "plan_name": meta.get("name"),
             "plan_code": meta.get("code"),
         })
-    current_meta = plan_meta_from_boost(highest_boost) or {"name": "Grátis", "code": "boost_7"}
+    current_meta = publish_access.get("plan") or plan_meta_from_boost(highest_boost) or {"name": "Grátis", "code": "boost_7"}
+    access_expiration = publish_access.get("expires_at")
+    if access_expiration:
+        next_expiration = access_expiration
     return {
         "total": row["total"] or 0,
         "active": row["active"] or 0,
@@ -2633,6 +3051,10 @@ def my_dashboard(user=Depends(current_user)):
             "current_plan_name": current_meta.get("name", "Grátis"),
             "current_plan_code": current_meta.get("code"),
             "next_expiration": next_expiration,
+            "ad_limit": int(publish_access.get("ad_limit") or current_meta.get("ad_limit") or 0),
+            "ads_used": int(publish_access.get("ads_used") or 0),
+            "ads_remaining": int(publish_access.get("ads_remaining") or 0),
+            "quota_status": publish_access.get("status"),
             "featured_ads": featured_ads,
             "expiring_soon_count": sum(1 for item in featured_ads if item.get("expiring_soon")),
         },
@@ -2977,7 +3399,16 @@ def _activate_paid_order(db, order):
         plan = {"name": "Básico legado 7 dias", "amount": float(order_data.get("amount") or 0), "days": 7, "boost": 1}
     paid_at = now_iso()
     db.execute("UPDATE payment_orders SET status='paid',paid_at=? WHERE id=?", (paid_at, order_data["id"]))
-    if order_data.get("product_id") and plan:
+
+    if not plan:
+        return
+
+    user_id = order_data["user_id"]
+    plan_code = order_data.get("plan_code")
+    plan_days = max(0, int(plan.get("days") or 0))
+    target_boost = int(plan.get("boost") or 0)
+
+    if order_data.get("product_id"):
         product = db.execute("SELECT featured_until FROM products WHERE id=?", (order_data["product_id"],)).fetchone()
         base_dt = now_dt()
         if product and product["featured_until"]:
@@ -2987,14 +3418,70 @@ def _activate_paid_order(db, order):
                     base_dt = current_until
             except Exception:
                 pass
-        until = (base_dt + timedelta(days=int(plan.get("days") or 0))).isoformat()
+        until = (base_dt + timedelta(days=plan_days)).isoformat()
         db.execute(
             "UPDATE products SET featured=1,featured_until=?,boost_level=?,plan_code=?,plan_expires_at=?,status='active',updated_at=? WHERE id=?",
-            (until, int(plan.get("boost") or 0), order_data.get("plan_code"), until, now_iso(), order_data["product_id"]),
+            (until, target_boost, plan_code, until, now_iso(), order_data["product_id"]),
         )
-    elif plan:
-        # Compra feita antes da publicação: libera uma nova publicação com este plano.
-        set_publish_plan_access(db, order_data["user_id"], order_data["plan_code"], "ready", order_data["id"], None)
+        if plan_code in {"boost_15", "boost_30"}:
+            # O pagamento renova/eleva o plano da conta, não apenas um anúncio.
+            db.execute(
+                "UPDATE publish_entitlements SET status='consumed',updated_at=? WHERE user_id=? AND status='ready' AND plan_code IN ('boost_15','boost_30')",
+                (now_iso(), user_id),
+            )
+            activate_account_plan_entitlement(
+                db,
+                user_id,
+                plan_code,
+                until,
+                order_data.get("id"),
+                order_data.get("product_id"),
+            )
+            # Todos os anúncios ativos da conta acompanham o plano da conta.
+            db.execute(
+                """UPDATE products
+                   SET featured=CASE WHEN status='active' THEN 1 ELSE featured END,
+                       featured_until=CASE WHEN status='active' THEN ? ELSE featured_until END,
+                       boost_level=CASE WHEN status='active' THEN ? ELSE boost_level END,
+                       plan_code=?,plan_expires_at=?,updated_at=?
+                   WHERE seller_id=?""",
+                (until, target_boost, plan_code, until, now_iso(), user_id),
+            )
+    elif plan_code in {"boost_15", "boost_30"}:
+        # Compra/renovação feita pela página de planos da conta. O período começa
+        # na confirmação do pagamento. Na renovação/upgrade preservamos o tempo
+        # restante: os novos dias são somados ao vencimento atual, quando houver.
+        access = get_publish_plan_access(db, user_id)
+        base_dt = now_dt()
+        current_exp = _parse_iso_dt(access.get("expires_at"))
+        if current_exp and current_exp > base_dt:
+            base_dt = current_exp
+        until = (base_dt + timedelta(days=plan_days)).isoformat()
+        db.execute(
+            "UPDATE publish_entitlements SET status='consumed',updated_at=? WHERE user_id=? AND status='ready' AND plan_code IN ('boost_15','boost_30')",
+            (now_iso(), user_id),
+        )
+        activate_account_plan_entitlement(db, user_id, plan_code, until, order_data.get("id"), None)
+        db.execute(
+            """UPDATE products
+               SET featured=CASE WHEN status='active' THEN 1 ELSE featured END,
+                   featured_until=CASE WHEN status='active' THEN ? ELSE featured_until END,
+                   boost_level=CASE WHEN status='active' THEN ? ELSE boost_level END,
+                   plan_code=?,plan_expires_at=?,updated_at=?
+               WHERE seller_id=?""",
+            (until, target_boost, plan_code, until, now_iso(), user_id),
+        )
+        db.execute(
+            """INSERT INTO publish_plan_access(user_id,plan_code,status,payment_order_id,product_id,selected_at,updated_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET plan_code=excluded.plan_code,status=excluded.status,
+                 payment_order_id=excluded.payment_order_id,product_id=excluded.product_id,
+                 selected_at=excluded.selected_at,updated_at=excluded.updated_at""",
+            (user_id, plan_code, "active", order_data.get("id"), None, paid_at, paid_at),
+        )
+    else:
+        # Compatibilidade com planos legados/grátis pagos antigos.
+        set_publish_plan_access(db, user_id, plan_code, "ready", order_data.get("id"), None)
 
 
 def _update_pagbank_order_from_payload(db, order, payload: dict):
@@ -3113,6 +3600,22 @@ def create_payment(payload: PaymentIn, request: Request, user=Depends(current_us
         plan = get_plan(payload.plan_code, db, include_inactive=False)
         if not plan:
             raise HTTPException(400, "Plano inválido ou indisponível")
+
+        access = get_publish_plan_access(db, user["id"])
+        current_plan = access.get("plan") or {}
+        current_code = current_plan.get("code")
+        target_code = plan.get("code")
+        if current_code == "boost_30" and target_code != "boost_30":
+            raise HTTPException(409, "Sua conta já é Premium. Para continuar, renove o Premium; downgrade para Plus ou Grátis não é permitido.")
+        if current_code == "boost_15" and target_code not in {"boost_15", "boost_30"}:
+            raise HTTPException(409, "Sua conta já é Plus. Renove o Plus ou faça upgrade para Premium.")
+
+        purchase_action = "activation"
+        if current_code in {"boost_15", "boost_30"} and target_code == current_code:
+            purchase_action = "renewal"
+        elif current_code == "boost_15" and target_code == "boost_30":
+            purchase_action = "upgrade"
+
         if plan.get("free") or float(plan.get("amount") or 0) <= 0:
             # Plano Grátis: cortesia de uso único por conta; não cria cobrança.
             if REQUIRE_EMAIL_VERIFICATION_FOR_FREE and not bool(user.get("email_verified")):
@@ -3170,6 +3673,7 @@ def create_payment(payload: PaymentIn, request: Request, user=Depends(current_us
                 "installments": 1,
                 "installment_source": "pagbank_pix",
                 "provider_installment_message": "PIX PagBank à vista",
+                "purchase_action": purchase_action,
             }
         # Cartão ainda não foi habilitado nesta integração.
         raise HTTPException(503, "Pagamento por cartão ainda não está integrado. Use PIX PagBank.")
@@ -3287,9 +3791,13 @@ def renew_product_feature(product_id: str, payload: RenewPlanIn, request: Reques
         product = db.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
         if not product or product["seller_id"] != user["id"]:
             raise HTTPException(404, "Anúncio não encontrado")
-        boost_level = int(product["boost_level"] or 0)
-        plan_meta = plan_meta_from_boost(boost_level)
-        plan_code = (plan_meta or {}).get("code")
+        access = get_publish_plan_access(db, user["id"])
+        account_plan = access.get("plan") or {}
+        plan_code = account_plan.get("code")
+        if plan_code not in {"boost_15", "boost_30"}:
+            boost_level = int(product["boost_level"] or 0)
+            plan_meta = plan_meta_from_boost(boost_level)
+            plan_code = (plan_meta or {}).get("code")
         if not plan_code or plan_code == "boost_7":
             raise HTTPException(400, "Este anúncio não possui um plano pago renovável")
         plan = get_plan(plan_code, db, include_inactive=True)
@@ -3556,7 +4064,7 @@ def admin_update_plan(plan_code: str, payload: AdminPlanIn, user=Depends(admin_u
             raise HTTPException(404, "Plano não encontrado")
         current = plan_row_to_dict(row)
         updates = {}
-        for key in ("name", "amount", "days", "active", "badge", "tagline", "features", "limitations"):
+        for key in ("name", "amount", "days", "ad_limit", "active", "badge", "tagline", "features", "limitations"):
             value = getattr(payload, key)
             if value is not None:
                 updates[key] = value
@@ -3566,13 +4074,15 @@ def admin_update_plan(plan_code: str, payload: AdminPlanIn, user=Depends(admin_u
             raise HTTPException(400, "Valor inválido")
         if "days" in updates and int(updates["days"]) < 0:
             raise HTTPException(400, "Duração inválida")
+        if "ad_limit" in updates and int(updates["ad_limit"]) < 1:
+            raise HTTPException(400, "O limite de anúncios precisa ser pelo menos 1")
         if current.get("free"):
             # O plano gratuito sempre mantém preço zero, mas a duração é definida pelo Master.
             updates["amount"] = 0.0
         fields = []
         values = []
         mapping = {
-            "name": "name", "amount": "amount", "days": "days", "active": "active",
+            "name": "name", "amount": "amount", "days": "days", "ad_limit": "ad_limit", "active": "active",
             "badge": "badge", "tagline": "tagline", "features": "features_json", "limitations": "limitations_json",
         }
         for key, value in updates.items():
@@ -4066,7 +4576,7 @@ def resolve_report(report_id: str, user=Depends(admin_user)):
 
 
 # Production frontend ---------------------------------------------------------
-# Render builds frontend/dist. API routes and /docs are declared above this catch-all.
+# Docker/Railway builds frontend/dist. API routes and /docs are declared above this catch-all.
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_frontend(full_path: str):
     if not FRONTEND_DIST.exists():

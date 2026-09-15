@@ -19,13 +19,14 @@ export default function Boost(){
  const {id}=useParams();
  const [plans,setPlans]=useState([]);
  const [p,setP]=useState(null);
+ const [access,setAccess]=useState(null);
  const [order,setOrder]=useState(null);
  const [busy,setBusy]=useState(false);
  const [taxId,setTaxId]=useState('');
  const [qrImage,setQrImage]=useState('');
  const [copied,setCopied]=useState(false);
  const [err,setErr]=useState('');
- useEffect(()=>{api('/api/plans').then(setPlans);api(`/api/products/${id}`).then(setP)},[id]);
+ useEffect(()=>{api('/api/plans').then(setPlans);api(`/api/products/${id}`).then(setP);api('/api/me/publish-plan').then(setAccess).catch(()=>{})},[id]);
 
  useEffect(()=>{
    if(!order?.id || order.status==='paid') return;
@@ -41,6 +42,7 @@ export default function Boost(){
          setOrder(prev=>({...prev,status:'paid'}));
          clearInterval(timer);
          api(`/api/products/${id}`).then(setP).catch(()=>{});
+         api('/api/me/publish-plan').then(setAccess).catch(()=>{});
        }else if(['failed','cancelled'].includes(status.status)){
          setOrder(prev=>({...prev,status:status.status}));
          clearInterval(timer);
@@ -76,16 +78,26 @@ export default function Boost(){
     </div>
 
     <div className="plan-grid premium-plan-grid colorful-plans-grid">
-      {plans.map((plan,index)=>{const tier=tierClass(index,plans.length);return <div className={`plan-card ${tier} ${tier==='premium'?'plan-card-featured':''}`} key={plan.code}>
+      {plans.map((plan,index)=>{
+        const tier=tierClass(index,plans.length);
+        const currentCode=access?.plan?.code||null;
+        const paidAccount=['boost_15','boost_30'].includes(currentCode);
+        const allowed=access?.allowed_paid_plan_codes||['boost_15','boost_30'];
+        const locked=Boolean((plan.free&&paidAccount)||(!plan.free&&paidAccount&&!allowed.includes(plan.code)));
+        const isRenewal=Boolean(paidAccount&&plan.code===currentCode);
+        const isUpgrade=Boolean(currentCode==='boost_15'&&plan.code==='boost_30');
+        const paidLabel=isRenewal?`Renovar ${currentCode==='boost_30'?'Premium':'Plus'}`:isUpgrade?'Fazer upgrade para Premium':'Pagar com PIX';
+        return <div className={`plan-card ${tier} ${tier==='premium'?'plan-card-featured':''} ${locked?'plan-locked':''}`} key={plan.code}>
         <div className="plan-top-badges"><span className="plan-name">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>{tier==='plus'&&<span className="plan-chip sold">Mais vendido</span>}{tier==='plus'&&<span className="plan-chip value">Melhor custo-benefício</span>}{tier==='premium'&&<span className="plan-chip premium-chip">Mais vantagens</span>}</div>
         <b>{plan.free?'Grátis':money(plan.amount)}</b><p className="plan-copy">{plan.tagline||'Escolha o nível de exposição do seu anúncio.'}</p>
+        <div className="plan-ad-limit"><b>{plan.ad_limit||1}</b> anúncio(s) cadastrados no máximo</div>
         {(plan.features||[]).length>0&&<ul>{(plan.features||[]).map(feature=><li key={feature}><Check/> {feature}</li>)}</ul>}
         {(plan.limitations||[]).length>0&&<ul className="plan-limit-list">{(plan.limitations||[]).map(item=><li key={item}><X/> {item}</li>)}</ul>}
-        {plan.free?<Link className="plan-free-btn wide" to={`/produto/${id}`}>Continuar no Grátis</Link>:<button className="primary wide" disabled={busy} onClick={()=>buy(plan.code)}>{busy?'Gerando PIX...':'Pagar com PIX'}</button>}
+        {plan.free?<Link className={`plan-free-btn wide ${locked?'disabled':''}`} aria-disabled={locked} onClick={e=>{if(locked)e.preventDefault()}} to={`/produto/${id}`}>{locked?'Indisponível':'Continuar no Grátis'}</Link>:<button className="primary wide" disabled={busy||locked} onClick={()=>buy(plan.code)}>{busy?'Gerando PIX...':locked?'Indisponível':paidLabel}</button>}
       </div>})}
     </div>
 
-    <div className="plan-comparison-wrap boost-comparison-wrap"><div className="comparison-head"><h3>Tabela de comparação</h3><p>O Grátis não recebe recursos de destaque. Plus e Premium aumentam a exposição.</p></div><div className="plan-comparison-table-wrap"><table className="plan-comparison-table"><thead><tr><th>Recursos</th><th className="basic">Grátis</th><th className="plus">Plus</th><th className="premium">Premium</th></tr></thead><tbody>{rows.map(row=><tr key={row.label}><td>{row.label}</td>{row.values.map((value,i)=><td key={i}>{renderCell(value)}</td>)}</tr>)}</tbody></table></div></div>
+    <div className="plan-comparison-wrap boost-comparison-wrap"><div className="comparison-head"><h3>Tabela de comparação</h3><p>O Grátis não recebe recursos de destaque. Plus e Premium aumentam a exposição.</p></div><div className="plan-comparison-table-wrap"><table className="plan-comparison-table"><thead><tr><th>Recursos</th><th className="basic">Grátis</th><th className="plus">Plus</th><th className="premium">Premium</th></tr></thead><tbody><tr><td>Limite de anúncios cadastrados</td>{plans.map(plan=><td key={plan.code}><span className="table-text">Até {plan.ad_limit||1}</span></td>)}</tr>{rows.map(row=><tr key={row.label}><td>{row.label}</td>{row.values.map((value,i)=><td key={i}>{renderCell(value)}</td>)}</tr>)}</tbody></table></div></div>
   </> : <div className={`checkout-card pagbank-checkout ${order.status==='paid'?'paid':''}`}>
     <h2>{order.status==='paid'?'Pagamento confirmado':order.status==='failed'?'Pagamento recusado':order.status==='cancelled'?'Pagamento cancelado':'Pague com PIX'}</h2>
     <p>Valor: <b>{money(order.amount)}</b></p>

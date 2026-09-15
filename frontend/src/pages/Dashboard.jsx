@@ -308,19 +308,22 @@ export default function Dashboard(){
           </div>
         </div>
         <div className="summary-points">
+          {summary.ad_limit>0&&<span><b>{summary.ads_used || 0}</b> de <b>{summary.ad_limit}</b> anúncios cadastrados • <b>{summary.ads_remaining || 0}</b> vaga(s) disponível(is)</span>}
           <span><b>{summary.featured_count || 0}</b> anúncio(s) em destaque</span>
           <span>Próximo vencimento: <b>{formatDate(summary.next_expiration)}</b></span>
           {summary.expiring_soon_count>0 && <span className="expiry-inline"><Clock3 size={15}/> {summary.expiring_soon_count} plano(s) vencendo em até 3 dias</span>}
         </div>
         <div className="summary-actions">
           <Link className="secondary-btn" to="/meus-anuncios">Administrar plano</Link>
-          {summary.current_plan_code==='boost_30' && featuredAds[0] ?
-            <button className="primary" onClick={()=>quickRenew(featuredAds[0])} disabled={busyRenew===featuredAds[0].id}><RefreshCw/>{busyRenew===featuredAds[0].id?'Gerando...':'Renovar Premium'}</button>
+          {summary.ads_remaining>0 && summary.quota_status!=='expired' ?
+            <Link className="primary" to="/publicar"><PlusCircle/> Novo anúncio</Link>
+            : summary.current_plan_code==='boost_30' ?
+              <Link className="primary" to="/escolher-plano"><RefreshCw/> Renovar Premium</Link>
+            : summary.current_plan_code==='boost_15' ?
+              <Link className="primary" to="/escolher-plano"><ArrowUpCircle/> Renovar Plus / Upgrade</Link>
             : summary.current_plan_code==='boost_7' ?
-              <Link className="primary" to="/meus-anuncios"><ArrowUpCircle/> Fazer upgrade</Link>
-            : summary.current_plan_code ?
-              <Link className="primary" to={featuredAds[0]?`/destaque/${featuredAds[0].id}`:'/meus-anuncios'}><ArrowUpCircle/> Migrar para melhor</Link>
-              : <Link className="primary" to="/meus-anuncios"><Sparkles/> Escolher plano</Link>}
+              <Link className="primary" to="/escolher-plano"><ArrowUpCircle/> Fazer upgrade</Link>
+              : <Link className="primary" to="/escolher-plano"><Sparkles/> Escolher plano</Link>}
         </div>
       </div>
 
@@ -329,7 +332,7 @@ export default function Dashboard(){
           {plans.map(plan=><div className={`plan-mini-card ${planTone(plan.code)}`} key={plan.code}>
             <span className="mini-name">{plan.code==='boost_7'?'Grátis':plan.code==='boost_15'?'Plus':'Premium'}</span>
             <b>{plan.free?'Grátis':money(plan.amount)}</b>
-            <small>{plan.free?'Publicação padrão • sem destaque':`${plan.days} dias • boost ${plan.boost}`}</small>
+            <small>{plan.free?`${plan.ad_limit||1} anúncio • publicação padrão`:`Até ${plan.ad_limit||1} anúncios • ${plan.days} dias`}</small>
           </div>)}
         </div>
       </div>

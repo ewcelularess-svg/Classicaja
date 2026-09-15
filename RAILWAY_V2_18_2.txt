@@ -1,0 +1,9 @@
+CLASSIFICAJÁ V2.18.2 — RAILWAY
+
+1. Não adicione novas variáveis para esta atualização.
+2. Envie os arquivos alterados para a branch main no GitHub.
+3. Aguarde o Auto Deploy do Railway ficar ACTIVE / Deployment successful.
+4. Abra:
+   https://www.classificaja.com.br/api/health
+5. Confirme:
+   "version":"2.18.2"

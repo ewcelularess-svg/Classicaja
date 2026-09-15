@@ -1,0 +1,12 @@
+CLASSIFICAJÁ V2.18.2 — ATUALIZAÇÃO PELO GITHUB + RAILWAY
+
+Use preferencialmente o ZIP "Arquivos Alterados".
+
+1. Extraia o ZIP no computador.
+2. Abra o repositório GitHub conectado ao Railway.
+3. Substitua os arquivos existentes mantendo os mesmos caminhos/pastas.
+4. Não envie o ZIP como um único arquivo dentro do repositório.
+5. Confirme/commit as alterações na branch main.
+6. O Railway iniciará o deploy automaticamente.
+7. Espere o status ACTIVE / Deployment successful.
+8. Valide https://www.classificaja.com.br/api/health e confirme version 2.18.2.

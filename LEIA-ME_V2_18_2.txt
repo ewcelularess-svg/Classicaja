@@ -1,0 +1,31 @@
+CLASSIFICAJÁ V2.18.2 — PREMIUM 10 + RENOVAÇÃO/UPGRADE CONTROLADOS
+
+Nova regra comercial
+---------------------
+- Grátis: 1 anúncio / 7 dias / uso único por conta.
+- Plus: até 5 anúncios cadastrados / 15 dias.
+- Premium: até 10 anúncios cadastrados / 30 dias.
+
+Renovação e upgrade
+-------------------
+1. Conta Plus: pode renovar Plus ou fazer upgrade para Premium.
+2. Conta Premium: pode somente renovar Premium.
+3. Downgrade de Premium para Plus/Grátis é bloqueado.
+4. Downgrade de Plus para Grátis também é bloqueado.
+5. Plano vencido mantém a identificação do último plano pago e bloqueia nova publicação.
+6. A publicação só volta após renovação ou upgrade permitido, desde que ainda exista vaga na cota.
+7. Renovação estende a validade, mas não aumenta o limite simultâneo de anúncios cadastrados.
+8. No Plus cheio, upgrade para Premium amplia a cota de 5 para 10.
+9. No Premium cheio, é necessário excluir um anúncio para liberar uma vaga; renovar apenas estende a validade.
+
+Controle de carga
+-----------------
+Pausados e vendidos continuam contando na cota enquanto estiverem armazenados. A exclusão física libera vaga. Isso limita crescimento de banco e Supabase Storage por conta.
+
+Migração
+--------
+Instalações V2.18.1 que ainda estiverem com Premium=15 são migradas automaticamente para Premium=10. Se o administrador já havia definido outro valor manualmente, ele é preservado.
+
+Versão da API
+-------------
+/api/health deve retornar version 2.18.2 após o deploy.

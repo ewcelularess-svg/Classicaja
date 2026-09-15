@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.0
+# ClassificaJá V2.18.2
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18 é uma versão de segurança e estabilidade construída sobre a V2.17.5, preservando o visual atual.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.2 mantém as correções de segurança da V2.18 e consolida a regra comercial de planos por conta.
 
 ## Stack
 
@@ -12,9 +12,22 @@ Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18 é 
 - Pagamentos: PIX PagBank
 - Login: e-mail/senha, Google e Facebook
 
-## Melhorias V2.18
+## Regra de planos V2.18.2
 
-A versão corrige incompatibilidade SQLite/PostgreSQL no chat, impede uploads órfãos durante publicação inválida, valida/reprocessa imagens reais, adiciona logout com revogação de sessão, hash de tokens novos, recuperação de senha, confirmação de e-mail, rate limiting, validação real de CPF/CNPJ, fila de direitos de publicação para múltiplas compras, índices de banco, redução do N+1 do catálogo e deduplicação de visualizações.
+- **Grátis:** 1 anúncio, 7 dias, uso único por conta.
+- **Plus:** até 5 anúncios cadastrados, validade padrão de 15 dias.
+- **Premium:** até **10 anúncios cadastrados**, validade padrão de 30 dias.
+- O limite considera anúncios ainda cadastrados, inclusive pausados/vendidos, pois continuam consumindo banco/storage. Excluir um anúncio libera uma vaga.
+- Enquanto o plano estiver válido e houver vaga, o usuário publica sem pagar novamente.
+- Plano vencido bloqueia novas publicações até renovação/upgrade permitido.
+- Conta Plus pode **renovar Plus** ou **fazer upgrade para Premium**.
+- Conta Premium pode **somente renovar Premium**; downgrade para Plus/Grátis é bloqueado no frontend e no backend.
+- Renovação estende a validade da conta. Upgrade para Premium preserva o tempo restante e acrescenta o período Premium.
+- Renovação não aumenta o teto de anúncios simultaneamente cadastrados; se a cota estiver cheia, é preciso liberar vaga. No Plus, o upgrade para Premium também pode ampliar a cota de 5 para 10.
+
+## Melhorias herdadas da V2.18
+
+A base inclui compatibilidade SQLite/PostgreSQL, validação de imagens reais, prevenção de uploads órfãos, logout com revogação de sessão, hash de tokens, recuperação de senha, confirmação de e-mail, rate limiting, validação de CPF/CNPJ, índices de banco, redução de N+1 no catálogo e deduplicação de visualizações.
 
 ## Executar localmente
 
@@ -40,21 +53,18 @@ npm run dev
 Frontend: `http://localhost:5173`  
 API/docs: `http://localhost:8000/docs`
 
-## Produção
+## Produção — GitHub + Railway
 
-O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. Use `render.yaml` como base e configure as variáveis descritas em `.env.example` / `VARIAVEIS_RENDER.txt`.
+O `Dockerfile` compila o frontend e serve frontend + API no mesmo serviço. O Railway deve continuar conectado à branch `main` do GitHub. Não é necessária nenhuma variável nova para migrar da V2.18.1 para a V2.18.2.
 
-Variáveis particularmente importantes na V2.18:
+Após o deploy, valide:
 
-- `PAYMENT_CONFIG_KEY`: chave exclusiva para criptografar credenciais de pagamento novas.
-- `ACCOUNT_TOKEN_SECRET`: assinatura dos links de confirmação/redefinição.
-- `PUBLIC_BASE_URL` e `FRONTEND_URL`: domínio público.
-- `SMTP_*`: confirmação de e-mail e recuperação de senha.
-- `REQUIRE_EMAIL_VERIFICATION_FOR_FREE=true`: reduz abuso do plano grátis.
-- `RATE_LIMIT_ENABLED=true`: proteção básica contra automação abusiva.
+`https://www.classificaja.com.br/api/health`
 
-## Migração
+A resposta deve indicar `"version":"2.18.2"`.
 
-A inicialização continua compatível com bancos das versões anteriores. A V2.18 cria automaticamente novas tabelas/índices e migra o acesso de publicação legado para a fila de `publish_entitlements` sem apagar a tabela antiga.
+## Migração automática
 
-Leia também `LEIA-ME_V2_18.txt` e `MIGRACAO_V2_18.md`.
+Se `plan_settings.boost_30` ainda estiver com o limite padrão anterior de 15 anúncios, a V2.18.2 altera automaticamente esse valor para 10. Limites personalizados diferentes de 15 são preservados.
+
+Leia também `LEIA-ME_V2_18_2.txt`, `MIGRACAO_V2_18_2.md` e `VALIDACAO_V2_18_2.md`.

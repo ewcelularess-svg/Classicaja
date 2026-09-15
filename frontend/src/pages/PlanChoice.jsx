@@ -88,7 +88,7 @@ export default function PlanChoice(){
   }
 
   if(access?.ready && !order) return <div className="page plan-gate-ready">
-    <div className="plan-gate-success"><Check/><div><span className="section-kicker">PLANO SELECIONADO</span><h1>{access.plan?.name}</h1><p>Seu plano já está liberado. Agora você pode publicar o anúncio.</p><button className="primary" onClick={()=>nav('/publicar')}>Continuar para publicar</button></div></div>
+    <div className="plan-gate-success"><Check/><div><span className="section-kicker">PLANO ATIVO</span><h1>{access.plan?.name}</h1><p>Seu plano já está liberado. Você usou <b>{access.ads_used||0} de {access.ad_limit||0}</b> vagas e ainda pode publicar <b>{access.ads_remaining||0}</b> anúncio(s).</p><button className="primary" onClick={()=>nav('/publicar')}>Continuar para publicar</button></div></div>
   </div>;
 
   return <div className="page plan-choice-page">
@@ -96,12 +96,14 @@ export default function PlanChoice(){
       <div>
         <span className="section-kicker">ANTES DE PUBLICAR</span>
         <h1>Escolha como seu anúncio será publicado</h1>
-        <p>Todo anúncio precisa de um plano. O <b>Grátis libera 1 anúncio por conta por 7 dias</b> e não gera cobrança. Plus e Premium são liberados depois da confirmação do PIX.</p>
+        <p>Seu plano vale para a conta durante a validade e possui um limite de anúncios. O <b>Grátis libera 1 anúncio por conta por 7 dias</b>. Plus e Premium permitem várias publicações até o limite do plano, sem pagar novamente a cada anúncio.</p>
       </div>
-      <div className="plan-choice-steps"><span><b>1</b> Escolha o plano</span><span><b>2</b> Pague somente se for Plus/Premium</span><span><b>3</b> Publique o anúncio</span></div>
+      <div className="plan-choice-steps"><span><b>1</b> Use seu plano ativo ou escolha um</span><span><b>2</b> Pague somente ao contratar/renovar</span><span><b>3</b> Publique até o limite do plano</span></div>
     </div>
 
     {!order ? <>
+      {access?.status==='quota_full'&&access?.plan&&<div className="plan-quota-alert"><div><b>Limite do {access.plan.name} atingido</b><span>Você já possui {access.ads_used||0} anúncio(s) cadastrados e o limite deste plano é {access.ad_limit||0}. Exclua um anúncio antigo para liberar uma vaga{Number(access.plan.boost||0)<3?' ou faça upgrade para um plano maior':''}.</span></div></div>}
+      {access?.status==='expired'&&access?.plan&&<div className="plan-quota-alert"><div><b>{access.plan.name} vencido</b><span>{access.plan.code==='boost_30'?'Sua conta continua vinculada ao Premium. Renove o Premium para voltar a publicar.':'Renove o Plus ou faça upgrade para Premium para voltar a publicar.'}</span></div></div>}
       {user && !user.email_verified&&<div className="email-verify-banner"><div><b>Confirme seu e-mail</b><span>O Plano Grátis é liberado somente após a confirmação do e-mail. Planos pagos continuam disponíveis normalmente.</span></div><button type="button" className="secondary-btn" onClick={resendVerification} disabled={verifyBusy}>{verifyBusy?'Enviando...':'Reenviar confirmação'}</button></div>}
       <div className="plan-choice-tax">
         <QrCode/>
@@ -112,8 +114,15 @@ export default function PlanChoice(){
       <div className="plans-highlight-grid colorful-plans-grid plan-choice-grid">
         {plans.map((plan,index)=>{
           const tier=tierClass(index,plans.length);
-          const freeLocked=Boolean(plan.free && access?.free_available===false);
-          return <article className={`plan-teaser-card ${tier} ${tier==='premium'?'recommended':''} ${freeLocked?'plan-locked':''}`} key={plan.code}>
+          const currentCode=access?.plan?.code||null;
+          const allowedPaid=access?.allowed_paid_plan_codes||['boost_15','boost_30'];
+          const paidAccount=['boost_15','boost_30'].includes(currentCode);
+          const freeLocked=Boolean(plan.free && (access?.free_available===false || paidAccount));
+          const transitionLocked=Boolean(!plan.free && paidAccount && !allowedPaid.includes(plan.code));
+          const isRenewal=Boolean(paidAccount && plan.code===currentCode);
+          const isUpgrade=Boolean(currentCode==='boost_15' && plan.code==='boost_30');
+          const actionLabel=freeLocked?'Indisponível':transitionLocked?'Indisponível':isRenewal?`Renovar ${currentCode==='boost_30'?'Premium':'Plus'}`:isUpgrade?'Fazer upgrade para Premium':plan.free?'Escolher Grátis':'Gerar PIX e escolher';
+          return <article className={`plan-teaser-card ${tier} ${tier==='premium'?'recommended':''} ${(freeLocked||transitionLocked)?'plan-locked':''}`} key={plan.code}>
             <div className="plan-top-badges">
               <span className="plan-mini-kicker">{tier==='basic'?'Grátis':tier==='plus'?'Plus':'Premium'}</span>
               {tier==='plus'&&<span className="plan-chip sold">Mais vendido</span>}
@@ -123,10 +132,11 @@ export default function PlanChoice(){
             <h3>{plan.name}</h3>
             <div className="plan-teaser-price">{plan.free?'R$ 0,00':money(plan.amount)}</div>
             <p>{plan.tagline}</p>
+            <div className="plan-ad-limit"><b>{plan.ad_limit||1}</b> anúncio(s) cadastrados no máximo</div>
             {(plan.features||[]).length>0&&<ul>{plan.features.map(f=><li key={f}>{f}</li>)}</ul>}
             {(plan.limitations||[]).length>0&&<ul className="plan-limit-list">{plan.limitations.map(f=><li key={f}><X size={14}/> {f}</li>)}</ul>}
-            <button className={`plan-cta ${tier!=='basic'?'active':''}`} disabled={busy || freeLocked} onClick={()=>choosePlan(plan)}>
-              {busy?'Aguarde...':freeLocked?'Grátis já utilizado':plan.free?'Escolher Grátis':'Gerar PIX e escolher'}
+            <button className={`plan-cta ${tier!=='basic'?'active':''}`} disabled={busy || freeLocked || transitionLocked} onClick={()=>choosePlan(plan)}>
+              {busy?'Aguarde...':actionLabel}
             </button>
           </article>
         })}
@@ -141,7 +151,7 @@ export default function PlanChoice(){
         <div className="pagbank-waiting"><span className="payment-pulse"></span> Aguardando confirmação do PagBank...</div>
         <small>Assim que o PagBank confirmar, o botão para publicar será liberado.</small>
       </>}
-      {order.status==='paid'&&<><div className="success-box"><Check/> Pagamento confirmado. Seu plano está pronto para uso.</div><button className="primary wide" onClick={()=>nav('/publicar')}>Publicar anúncio agora</button></>}
+      {order.status==='paid'&&<><div className="success-box"><Check/> Pagamento confirmado. Seu plano foi {order.purchase_action==='upgrade'?'atualizado':order.purchase_action==='renewal'?'renovado':'ativado'}.</div>{access?.ready?<button className="primary wide" onClick={()=>nav('/publicar')}>Publicar anúncio agora</button>:access?.status==='quota_full'?<div className="form-error">Plano ativo, mas o limite de {access.ad_limit||0} anúncios cadastrados já foi atingido. {access.plan?.code==='boost_15'?'Exclua um anúncio ou faça upgrade para Premium.':'Exclua um anúncio para liberar uma vaga.'}</div>:<button className="primary wide" onClick={()=>nav('/publicar')}>Continuar</button>}</>}
       {['failed','cancelled'].includes(order.status)&&<button className="primary wide" onClick={()=>{setOrder(null);setQrImage('')}}>Escolher outro plano</button>}
     </div>}
   </div>;
