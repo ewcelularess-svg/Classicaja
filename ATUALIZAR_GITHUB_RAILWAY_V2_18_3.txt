@@ -1,0 +1,9 @@
+CLASSIFICAJÁ V2.18.3 — GITHUB + RAILWAY
+
+1. Extraia o ZIP de arquivos alterados.
+2. Envie as pastas/arquivos para a raiz do repositório ewcelulares-svg/Classificaja.
+3. Substitua os arquivos existentes mantendo a mesma estrutura.
+4. Faça commit na branch main.
+5. Aguarde o Railway concluir o deploy.
+6. Confirme /api/health com version 2.18.3.
+7. No celular, teste Publicar > Galeria e Publicar > Câmera.

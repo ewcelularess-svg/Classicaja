@@ -1,0 +1,15 @@
+CLASSIFICAJÁ V2.18.3 — GALERIA MOBILE
+
+Ajuste do seletor de fotos para publicação e edição de anúncios.
+
+- Galeria virou a ação principal no celular.
+- Câmera ficou em botão separado.
+- Seleção múltipla continua com até 8 imagens.
+- É possível adicionar novas fotos à seleção sem perder as anteriores.
+- É possível remover uma foto da prévia antes de publicar.
+- O mesmo padrão foi aplicado à edição de anúncios.
+- Mantidas as regras de planos da V2.18.2: Grátis 1, Plus 5, Premium 10.
+
+Observação técnica: navegadores web não podem obrigar o Android a abrir um aplicativo específico como Samsung Galeria. O botão Galeria usa o seletor nativo de imagens; em Android/navegadores compatíveis ele abre o Photo Picker. Em outros navegadores, o Android pode exibir o seletor de provedores.
+
+Após o deploy, /api/health deve retornar version 2.18.3.

@@ -1,5 +1,5 @@
-import React,{useEffect,useMemo,useState} from 'react';
-import {ArrowLeft, GripVertical, Save, Star, Trash2, UploadCloud} from 'lucide-react';
+import React,{useEffect,useMemo,useRef,useState} from 'react';
+import {ArrowLeft, Camera, GripVertical, ImagePlus, Save, Star, Trash2} from 'lucide-react';
 import {Link, useNavigate, useParams} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
 
@@ -15,6 +15,8 @@ export default function EditProduct(){
  const [busy,setBusy]=useState(false);
  const [galleryBusy,setGalleryBusy]=useState(false);
  const [dragIndex,setDragIndex]=useState(null);
+ const galleryInputRef=useRef(null);
+ const cameraInputRef=useRef(null);
 
  useEffect(()=>{
   Promise.all([api('/api/categories'),api(`/api/products/${id}`)])
@@ -52,11 +54,15 @@ export default function EditProduct(){
  };
 
  const onFiles=e=>{
-  const available=Math.max(0,8-gallery.length);
-  const files=Array.from(e.target.files||[]).slice(0,available);
-  newPreviews.forEach(src=>URL.revokeObjectURL(src));
-  setNewFiles(files);
-  setNewPreviews(files.map(f=>URL.createObjectURL(f)));
+  const incoming=Array.from(e.target.files||[]);
+  if(!incoming.length){e.target.value='';return;}
+  const available=Math.max(0,8-gallery.length-newFiles.length);
+  const files=incoming.slice(0,available);
+  if(files.length){
+   setNewFiles(current=>[...current,...files]);
+   setNewPreviews(current=>[...current,...files.map(f=>URL.createObjectURL(f))]);
+  }
+  e.target.value='';
  };
 
  const removePendingImage=index=>{
@@ -137,11 +143,16 @@ export default function EditProduct(){
         <b>Adicionar mais fotos</b>
         <span>{newFiles.length ? `${newFiles.length} nova(s) foto(s) pronta(s). Clique em “Salvar alterações” para enviar.` : `Você ainda pode incluir ${Math.max(0,8-gallery.length)} foto(s) nesta galeria.`}</span>
       </div>
-      <label className="gallery-add-input">
-        <UploadCloud/>
-        <span>{newFiles.length?'Trocar seleção':'Selecionar imagens'}</span>
-        <input type="file" accept="image/*" multiple onChange={onFiles} disabled={gallery.length>=8}/>
-      </label>
+      <div className="gallery-photo-actions">
+        <button type="button" className="gallery-add-input gallery-pick-button" onClick={()=>galleryInputRef.current?.click()} disabled={remainingSlots<=0}>
+          <ImagePlus/><span>Galeria</span>
+        </button>
+        <button type="button" className="gallery-add-input camera-pick-button" onClick={()=>cameraInputRef.current?.click()} disabled={remainingSlots<=0}>
+          <Camera/><span>Câmera</span>
+        </button>
+        <input ref={galleryInputRef} className="native-photo-input" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={onFiles} disabled={remainingSlots<=0}/>
+        <input ref={cameraInputRef} className="native-photo-input" type="file" accept="image/*" capture="environment" onChange={onFiles} disabled={remainingSlots<=0}/>
+      </div>
     </div>
 
     {newPreviews.length>0 && <div className="gallery-new-preview">{newPreviews.map((src,i)=><div className="pending-image-card" key={src}><img src={src} alt={`Nova foto ${i+1}`}/><button type="button" onClick={()=>removePendingImage(i)} aria-label="Remover foto selecionada"><Trash2 size={14}/></button></div>)}</div>}

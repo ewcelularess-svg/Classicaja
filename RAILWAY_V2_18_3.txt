@@ -1,0 +1,9 @@
+CLASSIFICAJÁ V2.18.3 — RAILWAY
+
+Nenhuma variável nova é necessária.
+Envie os arquivos alterados ao GitHub na branch main.
+O Railway fará o deploy automático.
+Depois valide:
+https://www.classificaja.com.br/api/health
+
+Esperado: "version":"2.18.3"

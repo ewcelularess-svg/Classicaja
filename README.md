@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.2
+# ClassificaJá V2.18.3
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.2 mantém as correções de segurança da V2.18 e consolida a regra comercial de planos por conta.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.3 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
 
 ## Stack
 
@@ -12,7 +12,7 @@ Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.2 m
 - Pagamentos: PIX PagBank
 - Login: e-mail/senha, Google e Facebook
 
-## Regra de planos V2.18.2
+## Regra de planos V2.18.2/V2.18.3
 
 - **Grátis:** 1 anúncio, 7 dias, uso único por conta.
 - **Plus:** até 5 anúncios cadastrados, validade padrão de 15 dias.
@@ -61,10 +61,14 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.2"`.
+A resposta deve indicar `"version":"2.18.3"`.
 
 ## Migração automática
 
 Se `plan_settings.boost_30` ainda estiver com o limite padrão anterior de 15 anúncios, a V2.18.2 altera automaticamente esse valor para 10. Limites personalizados diferentes de 15 são preservados.
 
 Leia também `LEIA-ME_V2_18_2.txt`, `MIGRACAO_V2_18_2.md` e `VALIDACAO_V2_18_2.md`.
+
+## Fotos no mobile — V2.18.3
+
+Na publicação e na edição de anúncios, o celular passa a exibir ações separadas para **Galeria** e **Câmera**. A Galeria é a ação principal e continua aceitando seleção múltipla até o limite de 8 imagens. O navegador/Android decide qual seletor nativo exibir; aplicações web não conseguem forçar a abertura de um app específico como Samsung Galeria.
