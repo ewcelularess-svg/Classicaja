@@ -151,10 +151,17 @@ export default function Dashboard(){
    try{await api(`/api/me/partner-ads/${id}`,{method:'DELETE'});await load()}catch(e){alert(e.message)}
  };
 
- const profileStatusLabel=profile?.verified?'Perfil verificado':profile?.profile_review_status==='pending'?'Verificação em andamento':'Perfil incompleto';
- const profileStatusClass=profile?.verified?'verified':profile?.profile_review_status==='pending'?'pending':'unverified';
+ const isMaster=Boolean(profile?.is_master);
+ const profileStatusLabel=isMaster?'Master verificado':profile?.verified?'Perfil verificado':profile?.profile_review_status==='pending'?'Verificação em andamento':'Perfil incompleto';
+ const profileStatusClass=(isMaster||profile?.verified)?'verified':profile?.profile_review_status==='pending'?'pending':'unverified';
  const emailSource=profile?.email_verification_source==='google'?'Google':profile?.email_verification_source==='facebook'?'Facebook':profile?.email_verification_source==='master'?'Master':'';
- const verificationItems=[
+ const verificationItems=isMaster?[
+   {key:'email',label:'E-mail',status:'verified',detail:'Conta proprietária • verificação automática'},
+   {key:'name',label:'Nome',status:'verified',detail:'Dispensado de revisão • Master'},
+   {key:'phone',label:'Telefone',status:'verified',detail:profile?.phone?formatPhoneBR(profile.phone):'Dispensado de revisão • Master'},
+   {key:'address',label:'Endereço',status:'verified',detail:profile?.city&&profile?.state?`${profile.city} - ${profile.state}`:'Dispensado de revisão • Master'},
+   {key:'avatar',label:'Foto',status:'verified',detail:profile?.avatar_url?'Foto da conta Master':'Dispensado de revisão • Master'},
+ ]:[
    {key:'email',label:'E-mail',status:profile?.email_verified?'verified':'unverified',detail:profile?.email_verified?(emailSource?`Confirmado pelo ${emailSource}`:'E-mail confirmado'):'Ainda não confirmado'},
    {key:'name',label:'Nome',status:profile?.name_verification_status||'unverified',detail:'Identificação do perfil'},
    {key:'phone',label:'Telefone',status:profile?.phone_verification_status||'unverified',detail:profile?.phone?formatPhoneBR(profile.phone):'Não informado'},
@@ -238,7 +245,7 @@ export default function Dashboard(){
   {activeTab==='profile'&&<section className="profile-security-section">
     <div className="profile-security-grid">
       <div className="profile-card-v2165 profile-verification-card">
-        <div className="profile-card-title"><ShieldCheck/><div><h2>Status de verificação</h2><p>O selo geral só aparece quando todos os dados obrigatórios estiverem verificados.</p></div></div>
+        <div className="profile-card-title"><ShieldCheck/><div><h2>{isMaster?'Conta Master':'Status de verificação'}</h2><p>{isMaster?'A conta proprietária do ClassificaJá é verificada automaticamente e não passa por autoaprovação no Master.':'O selo geral só aparece quando todos os dados obrigatórios estiverem verificados.'}</p></div></div>
         <div className="profile-verification-list">
           {verificationItems.map(item=>{const meta=verificationMeta(item.status);return <div className="profile-verification-item" key={item.key}><div><b>{item.label}</b><small>{item.detail}</small></div><span className={`field-verification-pill ${meta.tone}`}>{meta.tone==='verified'?<BadgeCheck/>:meta.tone==='pending'?<Clock3/>:<ShieldCheck/>}{meta.label}</span></div>})}
         </div>
@@ -248,11 +255,11 @@ export default function Dashboard(){
         <div className="profile-photo-preview">{profilePhotoPreview||profile?.avatar_url?<img src={profilePhotoPreview||imageUrl(profile?.avatar_url)} alt="Foto do perfil"/>:<UserRound/>}</div>
         <label className="profile-file-btn"><Camera/>Selecionar foto<input type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseProfilePhoto}/></label>
         {profilePhoto&&<button className="primary" onClick={uploadProfilePhoto} disabled={profileBusy}>{profileBusy?'Enviando...':'Salvar foto'}</button>}
-        <small className="verification-note">Ao trocar a foto, o perfil volta para revisão do Master.</small>
+        <small className="verification-note">{isMaster?'Conta Master: a foto é atualizada sem entrar em revisão.':'Ao trocar a foto, o perfil volta para revisão do Master.'}</small>
       </div>
 
       <form className="profile-card-v2165 profile-data-card" onSubmit={saveProfile}>
-        <div className="profile-card-title"><UserRound/><div><h2>Dados pessoais</h2><p>Todos os dados alterados passam por nova verificação.</p></div></div>
+        <div className="profile-card-title"><UserRound/><div><h2>Dados pessoais</h2><p>{isMaster?'Como proprietário do site, seus dados são atualizados sem fila de moderação. A confirmação de identidade continua obrigatória.':'Todos os dados alterados passam por nova verificação.'}</p></div></div>
         <div className="profile-form-grid">
           <label>Nome completo<input value={profileForm.name} onChange={e=>setProfileForm({...profileForm,name:e.target.value})} required/></label>
           <label>Telefone com DDD<input inputMode="tel" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:formatPhoneBR(e.target.value)})} placeholder="(45) 99999-9999"/></label>
@@ -263,8 +270,8 @@ export default function Dashboard(){
           <label>CEP<input inputMode="numeric" value={profileForm.postal_code} onChange={e=>setProfileForm({...profileForm,postal_code:e.target.value})} placeholder="00000-000"/></label>
           {profile?.has_password?<label className="span-2 confirmation-field"><ShieldCheck/>Senha atual para confirmar<input type="password" value={profileForm.current_password} onChange={e=>setProfileForm({...profileForm,current_password:e.target.value})} placeholder="Digite sua senha atual" required/></label>:<div className="span-2 social-profile-confirm"><ShieldCheck/><div><b>Conta conectada com {profile?.auth_provider==='google'?'Google':'Facebook'}</b><span>Alterações sensíveis usam sua sessão social recente. Se ela tiver expirado, entre novamente pelo provedor para confirmar.</span></div></div>}
         </div>
-        <div className="profile-verification-banner"><ShieldCheck/><div><b>Verificação por campo</b><span>Somente o dado que você alterar volta para análise. O que já estiver verificado permanece aprovado. {profile?.email_verified?`Seu e-mail já está confirmado${emailSource?` pelo ${emailSource}`:''}.`:''}</span></div></div>
-        <button className="primary" disabled={profileBusy}>{profileBusy?'Salvando...':'Salvar e enviar para verificação'}</button>
+        <div className="profile-verification-banner"><ShieldCheck/><div><b>{isMaster?'Verificação automática do Master':'Verificação por campo'}</b><span>{isMaster?'A conta proprietária não entra na fila de revisão. Alterações permanecem verificadas automaticamente, mas exigem confirmação de identidade.':<>Somente o dado que você alterar volta para análise. O que já estiver verificado permanece aprovado. {profile?.email_verified?`Seu e-mail já está confirmado${emailSource?` pelo ${emailSource}`:''}.`:''}</>}</span></div></div>
+        <button className="primary" disabled={profileBusy}>{profileBusy?'Salvando...':isMaster?'Salvar alterações':'Salvar e enviar para verificação'}</button>
       </form>
 
       <form className="profile-card-v2165 password-card-v2165" onSubmit={changePassword}>

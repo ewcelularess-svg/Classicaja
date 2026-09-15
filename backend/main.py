@@ -635,6 +635,12 @@ def init_db():
             WHEN verified=1 THEN 'verified'
             WHEN name_verification_status='pending' OR phone_verification_status='pending' OR address_verification_status='pending' OR avatar_verification_status='pending' THEN 'pending'
             ELSE 'unverified' END""")
+        # V2.17.3 — a conta proprietária (ADMIN_EMAIL) é verificada automaticamente.
+        # Ela não entra no fluxo de moderação que o próprio Master administra.
+        if MASTER_EMAIL:
+            db.execute("""UPDATE users SET verified=1,profile_review_status='verified',email_verified=1,email_verification_source='master',
+                name_verification_status='verified',phone_verification_status='verified',address_verification_status='verified',avatar_verification_status='verified'
+                WHERE LOWER(email)=? AND role='admin'""", (MASTER_EMAIL,))
         ensure_column(db, "products", "neighborhood", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "products", "status", "TEXT NOT NULL DEFAULT 'active'")
         ensure_column(db, "products", "featured_until", "TEXT")
@@ -793,6 +799,12 @@ def init_db():
                     "UPDATE users SET role='admin', verified=1, status='active' WHERE LOWER(email)=?",
                     (admin_email,),
                 )
+            # O proprietário não entra na própria fila de moderação.
+            db.execute("""UPDATE users SET verified=1,status='active',profile_review_status='verified',
+                email_verified=1,email_verification_source='master',
+                name_verification_status='verified',phone_verification_status='verified',
+                address_verification_status='verified',avatar_verification_status='verified'
+                WHERE LOWER(email)=? AND role='admin'""", (admin_email,))
 
         if SEED_DEMO_DATA:
             admin_id = "demo-admin"
@@ -1178,6 +1190,7 @@ def user_public(row):
         "avatar_verification_status": value("avatar_verification_status", "unverified"),
         "auth_provider": value("auth_provider", "local"),
         "has_password": bool(value("password_salt") and value("password_hash")),
+        "is_master": bool(MASTER_EMAIL and str(row["email"]).strip().lower() == MASTER_EMAIL and str(row["role"]).lower() == "admin"),
     }
 
 
@@ -1229,10 +1242,21 @@ def _normalize_verification_status(value: str) -> str:
     return value if value in {"verified", "pending", "unverified"} else "unverified"
 
 
+def _is_master_account(row) -> bool:
+    if not row or not MASTER_EMAIL:
+        return False
+    return str(_row_value(row, "email", "")).strip().lower() == MASTER_EMAIL and str(_row_value(row, "role", "")).lower() == "admin"
+
+
 def _recompute_user_verification(db, user_id: str):
     row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if not row:
         return None
+    if _is_master_account(row):
+        db.execute("""UPDATE users SET verified=1,profile_review_status='verified',email_verified=1,email_verification_source='master',
+            name_verification_status='verified',phone_verification_status='verified',address_verification_status='verified',avatar_verification_status='verified'
+            WHERE id=?""", (user_id,))
+        return db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     complete = bool(_row_value(row, "email_verified", 0))
     complete = complete and all(
         _normalize_verification_status(str(_row_value(row, col, "unverified"))) == "verified"
@@ -1370,7 +1394,7 @@ def product_dict(db, row, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.16.7", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.17.3", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -1618,18 +1642,19 @@ def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_auth_contex
         "".join(ch for ch in str(_row_value(user, "postal_code", "") or "") if ch.isdigit()),
     )
     new_address = (address_line, neighborhood, city, state, postal_digits)
-    name_status = _normalize_verification_status(str(_row_value(user, "name_verification_status", "unverified")))
-    phone_status = _normalize_verification_status(str(_row_value(user, "phone_verification_status", "unverified")))
-    address_status = _normalize_verification_status(str(_row_value(user, "address_verification_status", "unverified")))
+    is_master = _is_master_account(user)
+    name_status = "verified" if is_master else _normalize_verification_status(str(_row_value(user, "name_verification_status", "unverified")))
+    phone_status = "verified" if is_master else _normalize_verification_status(str(_row_value(user, "phone_verification_status", "unverified")))
+    address_status = "verified" if is_master else _normalize_verification_status(str(_row_value(user, "address_verification_status", "unverified")))
     changed = []
     if name != old_name:
-        name_status = "pending"
+        name_status = "verified" if is_master else "pending"
         changed.append("nome")
     if phone_digits != old_phone:
-        phone_status = "pending" if phone_digits else "unverified"
+        phone_status = "verified" if is_master else ("pending" if phone_digits else "unverified")
         changed.append("telefone")
     if new_address != old_address:
-        address_status = "pending" if _address_is_complete(address_line, city, state, postal_digits) else "unverified"
+        address_status = "verified" if is_master else ("pending" if _address_is_complete(address_line, city, state, postal_digits) else "unverified")
         changed.append("endereço")
     with conn() as db:
         db.execute(
@@ -1640,7 +1665,10 @@ def update_my_profile(payload: ProfileUpdateIn, user=Depends(current_auth_contex
         )
         row = _recompute_user_verification(db, user["id"])
         db.commit()
-    message = "Nenhum dado verificado foi alterado." if not changed else "Somente os dados alterados foram enviados para verificação: " + ", ".join(changed) + "."
+    if is_master:
+        message = "Dados da conta Master atualizados. A verificação é automática para o proprietário do site."
+    else:
+        message = "Nenhum dado verificado foi alterado." if not changed else "Somente os dados alterados foram enviados para verificação: " + ", ".join(changed) + "."
     return {"ok": True, "message": message, "user": user_public(row)}
 
 
@@ -1649,16 +1677,18 @@ async def update_my_avatar(current_password: str = Form(""), image: UploadFile =
     _confirm_sensitive_action(user, current_password)
     new_url = await save_profile_image(image)
     old_url = _row_value(user, "avatar_url", "")
+    is_master = _is_master_account(user)
     with conn() as db:
         db.execute(
-            "UPDATE users SET avatar_url=?,avatar_verification_status='pending',profile_updated_at=? WHERE id=?",
-            (new_url, now_iso(), user["id"]),
+            "UPDATE users SET avatar_url=?,avatar_verification_status=?,profile_updated_at=? WHERE id=?",
+            (new_url, "verified" if is_master else "pending", now_iso(), user["id"]),
         )
         row = _recompute_user_verification(db, user["id"])
         db.commit()
     if old_url and old_url != new_url:
         delete_product_image(old_url)
-    return {"ok": True, "message": "Foto atualizada. Somente a foto voltou para verificação do Master", "user": user_public(row)}
+    message = "Foto da conta Master atualizada com verificação automática." if is_master else "Foto atualizada. Somente a foto voltou para verificação do Master"
+    return {"ok": True, "message": message, "user": user_public(row)}
 
 
 @app.put("/api/me/password")
@@ -2937,6 +2967,10 @@ def admin_verify_user_field(user_id: str, field_name: str, payload: VerifyIn, us
         target = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if not target:
             raise HTTPException(404, "Usuário não encontrado")
+        if _is_master_account(target):
+            row = _recompute_user_verification(db, user_id)
+            db.commit()
+            return {"ok": True, "message": "A conta Master possui verificação automática.", "user": user_public(row)}
         if payload.verified:
             if field_name == "name" and not str(_row_value(target, "name", "")).strip():
                 raise HTTPException(400, "O usuário ainda não informou o nome")
@@ -2970,6 +3004,10 @@ def admin_verify_user(user_id: str, payload: VerifyIn, user=Depends(admin_user))
         target = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if not target:
             raise HTTPException(404, "Usuário não encontrado")
+        if _is_master_account(target):
+            _recompute_user_verification(db, user_id)
+            db.commit()
+            return {"ok": True, "message": "A conta Master possui verificação automática."}
         if payload.verified:
             if not str(_row_value(target, "name", "")).strip() or not str(_row_value(target, "phone", "")).strip() or not str(_row_value(target, "avatar_url", "")).strip():
                 raise HTTPException(400, "Complete nome, telefone e foto antes da verificação geral")
