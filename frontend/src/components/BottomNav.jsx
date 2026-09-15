@@ -10,7 +10,7 @@ export default function BottomNav(){
   {user?.role==='admin'
     ? <NavLink to="/admin"><ShieldCheck/><span>Master</span></NavLink>
     : <NavLink to="/painel"><LayoutDashboard/><span>Painel</span></NavLink>}
-  <NavLink className="sell" to="/escolher-plano"><PlusCircle/><span>Vender</span></NavLink>
+  <NavLink className="sell" to={user?'/escolher-plano':'/entrar'}><PlusCircle/><span>Anunciar</span></NavLink>
   <NavLink to="/mensagens"><MessageCircle/><span>Chat</span></NavLink>
   <NavLink to="/meus-anuncios"><UserCircle/><span>Anúncios</span></NavLink>
  </nav>

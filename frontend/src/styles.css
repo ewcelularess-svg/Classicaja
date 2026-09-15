@@ -5199,3 +5199,88 @@ body{background:#f7f8fa}
     font-size:10.5px!important;
   }
 }
+
+
+/* =========================================================
+   CLASSIFICAJÁ — V2.17.1 CONTA CLEAN + ANUNCIAR NO MENU
+   ========================================================= */
+/* O antigo FAB não deve mais cobrir conteúdo em nenhuma tela. */
+.mobile-floating-publish{display:none!important}
+
+@media(max-width:900px){
+  /* Conta plana: somente avatar/ícone + texto, sem card ao redor. */
+  .premium-actions .header-profile-menu-wrap>.header-profile-action{
+    display:flex!important;
+    flex-direction:column!important;
+    align-items:center!important;
+    justify-content:center!important;
+    width:58px!important;
+    min-width:58px!important;
+    height:48px!important;
+    min-height:48px!important;
+    padding:2px 2px!important;
+    gap:2px!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    color:#111827!important;
+  }
+  .premium-actions .header-profile-menu-wrap>.header-profile-action.active{
+    background:transparent!important;
+    color:var(--brand)!important;
+  }
+  .premium-actions .header-profile-menu-wrap>.header-profile-action span{
+    display:block!important;
+    max-width:58px!important;
+    font-size:9.5px!important;
+    line-height:1.05!important;
+    font-weight:800!important;
+    color:#374151!important;
+    white-space:nowrap!important;
+    overflow:hidden!important;
+    text-overflow:ellipsis!important;
+  }
+  .premium-actions .header-profile-menu-wrap>.header-profile-action svg,
+  .premium-actions .header-profile-menu-wrap>.header-profile-action .header-avatar-img{
+    display:block!important;
+    width:28px!important;
+    height:28px!important;
+    flex:0 0 28px!important;
+    border-radius:50%!important;
+    object-fit:cover!important;
+    border:1px solid #eef0f3!important;
+  }
+
+  /* A ação de publicar passa a viver no centro do menu inferior. */
+  .bottom-nav .sell{
+    color:var(--brand)!important;
+    font-weight:900!important;
+  }
+  .bottom-nav .sell svg{
+    width:31px!important;
+    height:31px!important;
+    padding:5px!important;
+    border-radius:50%!important;
+    background:linear-gradient(135deg,#f21852,#ff315f)!important;
+    color:#fff!important;
+    stroke:#fff!important;
+    box-shadow:0 5px 14px rgba(242,24,82,.24)!important;
+  }
+  .bottom-nav .sell span{
+    color:var(--brand)!important;
+    font-size:9.5px!important;
+    font-weight:900!important;
+  }
+}
+
+@media(max-width:420px){
+  .premium-actions .header-profile-menu-wrap>.header-profile-action{
+    width:54px!important;
+    min-width:54px!important;
+  }
+  .premium-actions .header-profile-menu-wrap>.header-profile-action span{
+    max-width:54px!important;
+    font-size:9px!important;
+  }
+}

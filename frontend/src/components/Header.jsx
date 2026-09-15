@@ -22,9 +22,6 @@ export default function Header(){
   const location=useLocation();
   const isHome=location.pathname==='/' ;
   const isProduct=location.pathname.startsWith('/produto/');
-  const hideFloatingPublish=[
-    '/entrar','/cadastro','/escolher-plano','/anunciar','/novo-anuncio'
-  ].some(path=>location.pathname===path || location.pathname.startsWith(`${path}/`)) || isProduct;
   const [term,setTerm]=useState('');
   const [city,setCity]=useState('');
   const [slides,setSlides]=useState([]);
@@ -150,10 +147,5 @@ export default function Header(){
 
   </header>
 
-  {!hideFloatingPublish&&<Link
-    className="mobile-floating-publish"
-    to={user?'/escolher-plano':'/entrar'}
-    aria-label="Criar novo anúncio"
-  ><Plus/><span>Novo anúncio</span></Link>}
   </>
 }
