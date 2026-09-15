@@ -1,0 +1,10 @@
+CLASSIFICAJÁ V2.18.9 — GITHUB + RAILWAY
+
+1. Extraia o ZIP de arquivos alterados.
+2. Envie os arquivos mantendo as mesmas pastas no repositório GitHub.
+3. Substitua os arquivos existentes.
+4. Faça o commit na branch main.
+5. Aguarde o Auto Deploy do Railway.
+6. Teste o botão Anunciar com uma conta Premium/Plus ativa.
+7. Confirme https://www.classificaja.com.br/api/health
+8. Esperado: "version":"2.18.9"

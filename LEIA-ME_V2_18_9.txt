@@ -1,0 +1,11 @@
+CLASSIFICAJÁ V2.18.9 — PUBLICAÇÃO DIRETA COM PLANO ATIVO
+
+CORREÇÃO PRINCIPAL
+- Ao tocar em Anunciar, usuário autenticado vai para /publicar.
+- A rota valida o plano automaticamente.
+- Plano ativo + vaga disponível: abre o formulário direto.
+- Sem plano, vencido ou limite cheio: redireciona para escolher/renovar plano.
+- Sem login: redireciona para entrar.
+
+Nenhuma nova variável é necessária no Railway.
+Após o deploy, confirme /api/health com version 2.18.9.

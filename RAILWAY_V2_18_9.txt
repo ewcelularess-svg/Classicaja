@@ -1,0 +1,4 @@
+CLASSIFICAJÁ V2.18.9 — RAILWAY
+
+Não requer novas variáveis de ambiente.
+Após o deploy, confirme /api/health com version 2.18.9.

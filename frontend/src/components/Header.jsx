@@ -111,7 +111,7 @@ export default function Header(){
               <button type="button" className="header-profile-logout" onClick={()=>{setProfileMenuOpen(false);logout();nav('/')}}><LogOut/>Sair da conta</button>
             </div>}
           </div>
-          <Link className="publish-premium" to="/escolher-plano"><Plus/> <span>Anunciar</span></Link>
+          <Link className="publish-premium" to="/publicar"><Plus/> <span>Anunciar</span></Link>
           {user.role==='admin'&&<Link className="header-action admin-header-action" title="Administração" to="/admin"><ShieldCheck/><span>Master</span></Link>}
         </> : <>
           <Link className="header-action login-premium" to="/entrar"><UserCircle/><span>Entrar</span></Link>

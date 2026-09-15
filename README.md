@@ -1,6 +1,10 @@
-# ClassificaJá V2.18.8
+# ClassificaJá V2.18.9
 
 Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.8 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
+
+## Fluxo direto de publicação — V2.18.9
+
+Contas com plano ativo e vagas disponíveis agora entram diretamente no formulário ao tocar em **Anunciar**. A tela de planos só aparece quando realmente é necessária: plano inexistente, vencido ou cota cheia.
 
 ## Stack
 
@@ -61,7 +65,7 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.8"`.
+A resposta deve indicar `"version":"2.18.9"`.
 
 ## Migração automática
 
