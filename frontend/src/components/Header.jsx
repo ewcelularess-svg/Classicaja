@@ -35,7 +35,7 @@ export default function Header(){
         <img src="/logo-classificaja.png" alt="ClassificaJá" className="brand-logo"/>
       </Link>
 
-      {!isHome&&<form className="header-search" onSubmit={submitSearch}>
+      <form className={`header-search ${isHome?'header-home-search':''}`} onSubmit={submitSearch}>
         <div className="header-search-field header-search-keyword">
           <Search/>
           <input value={term} onChange={e=>setTerm(e.target.value)} placeholder="O que você está procurando?" aria-label="Buscar produtos"/>
@@ -46,7 +46,7 @@ export default function Header(){
           <input value={city} onChange={e=>setCity(e.target.value)} placeholder="Cidade" aria-label="Cidade"/>
         </div>
         <button type="submit">Buscar</button>
-      </form>}
+      </form>
 
       <div className="header-actions premium-actions">
         {user&&<NotificationsMenu/>}
