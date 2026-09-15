@@ -6386,3 +6386,14 @@ body{background:#f7f8fa}
 .dashboard-push-cta-icon{width:44px;height:44px;border-radius:14px;background:#e11d48;color:#fff;display:grid;place-items:center;box-shadow:0 8px 18px rgba(225,29,72,.22)}
 .dashboard-push-cta-icon svg{width:21px;height:21px}.dashboard-push-cta>span:nth-child(2){display:flex;flex-direction:column;gap:3px}.dashboard-push-cta b{font-size:13px}.dashboard-push-cta small{font-size:10px;color:#64748b;line-height:1.4}.dashboard-push-cta>svg{width:18px;color:#e11d48}.dashboard-push-cta.active{border-color:#bbf7d0;background:linear-gradient(135deg,#ecfdf3,#fff 66%)}.dashboard-push-cta.active .dashboard-push-cta-icon{background:#16a34a;box-shadow:0 8px 18px rgba(22,163,74,.2)}.dashboard-push-cta.active>svg{color:#16a34a}
 @media(max-width:640px){.dashboard-push-cta{padding:13px 14px;border-radius:15px}.dashboard-push-cta-icon{width:40px;height:40px;border-radius:12px}.dashboard-push-cta b{font-size:12px}.dashboard-push-cta small{font-size:9px}}
+
+
+/* V2.18.15 — Central de retenção e reativação */
+.push-preference-group{background:#fff;border:1px solid #e9edf3;border-radius:20px;padding:18px;box-shadow:0 8px 24px rgba(15,23,42,.035)}
+.push-preference-group+.push-preference-group{margin-top:14px}
+.push-preference-group-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}
+.push-preference-group-head>div{min-width:0}.push-preference-group-head span{display:block;color:#e11d48;font-size:10px;font-weight:900;letter-spacing:.13em;margin-bottom:4px}
+.push-preference-group-head h3{margin:0;font-size:18px;line-height:1.25;color:#111827}.push-preference-group-head p{margin:5px 0 0;color:#64748b;font-size:12px;line-height:1.5;max-width:760px}
+.retention-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.push-preference-grid.is-disabled{opacity:.48;filter:grayscale(.25);pointer-events:none}
+.push-preference-card{transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}.push-preference-card:hover{transform:translateY(-1px);border-color:#fecdd3;box-shadow:0 8px 18px rgba(225,29,72,.06)}
+@media(max-width:720px){.push-preference-group{padding:14px;border-radius:17px}.push-preference-group-head{align-items:flex-start}.push-preference-group-head h3{font-size:16px}.push-preference-group-head p{font-size:11px}.retention-grid{grid-template-columns:1fr!important}}

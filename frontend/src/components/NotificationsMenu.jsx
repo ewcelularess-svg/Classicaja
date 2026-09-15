@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {Bell, CheckCheck, Megaphone, MessageCircle} from 'lucide-react';
+import {Bell, CheckCheck, Clock3, Eye, Heart, Megaphone, MessageCircle, RefreshCw} from 'lucide-react';
 import {useNavigate} from 'react-router-dom';
 import {api} from '../lib/api';
 
@@ -64,10 +64,8 @@ export default function NotificationsMenu(){
   if(n.unread) setUnreadCount(v=>Math.max(0,v-1));
   setOpen(false);
   setToast(null);
-  if(n.conversation_id){
-    nav(`/mensagens?c=${encodeURIComponent(n.conversation_id)}`);
-    return;
-  }
+  if(n.action_url){nav(n.action_url);return;}
+  if(n.conversation_id){nav(`/mensagens?c=${encodeURIComponent(n.conversation_id)}`);return;}
   if(n.product_id) nav(`/produto/${n.product_id}`);
  };
 
@@ -76,7 +74,8 @@ export default function NotificationsMenu(){
  };
 
  const isChat=(n)=>n.type==='chat_message';
- const iconFor=(n)=>isChat(n)?<MessageCircle/>:<Megaphone/>;
+ const iconFor=(n)=>{if(isChat(n))return <MessageCircle/>;if(n.type==='seller_favorite')return <Heart/>;if(n.type==='seller_performance')return <Eye/>;if(n.type==='plan_expiry')return <Clock3/>;if(n.type==='inactivity_reminder')return <RefreshCw/>;return <Megaphone/>};
+ const toastTitle=(n)=>isChat(n)?'Nova mensagem no chat':n.type==='seller_favorite'?'Novo favorito':n.type==='seller_performance'?'Desempenho dos anúncios':n.type==='plan_expiry'?'Plano perto de vencer':n.type==='weekly_summary'?'Resumo semanal':n.type==='inactivity_reminder'?'Seus anúncios':'Novo anúncio';
 
  return <>
   <div className="notifications-menu" ref={rootRef}>
@@ -94,7 +93,7 @@ export default function NotificationsMenu(){
    </div>}
   </div>
   {toast&&<button className={`notification-toast ${isChat(toast)?'chat':''}`} type="button" onClick={()=>openNotification(toast)}>
-    {iconFor(toast)}<span><b>{isChat(toast)?'Nova mensagem no chat':'Novo anúncio'}</b><small>{toast.body}</small></span>
+    {iconFor(toast)}<span><b>{toastTitle(toast)}</b><small>{toast.body}</small></span>
   </button>}
  </>
 }

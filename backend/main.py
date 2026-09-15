@@ -69,6 +69,11 @@ PUSH_VAPID_PRIVATE_KEY = (os.getenv("PUSH_VAPID_PRIVATE_KEY") or "").replace("\\
 PUSH_VAPID_PUBLIC_KEY = (os.getenv("PUSH_VAPID_PUBLIC_KEY") or "").strip()
 PUSH_VAPID_SUBJECT = (os.getenv("PUSH_VAPID_SUBJECT") or (f"mailto:{os.getenv('ADMIN_EMAIL','').strip()}" if os.getenv('ADMIN_EMAIL','').strip() else "mailto:admin@classificaja.com.br")).strip()
 
+# V2.18.15 — retenção e reativação. O ciclo roda no próprio serviço Railway,
+# mas todos os disparos são idempotentes no banco para evitar duplicidade em restart.
+RETENTION_ENABLED = os.getenv("RETENTION_ENABLED", "true").lower() in {"1", "true", "yes", "sim"}
+RETENTION_LOOP_SECONDS = max(900, int(os.getenv("RETENTION_LOOP_SECONDS", "3600") or "3600"))
+
 PAYMENT_PROVIDER_DEFS = {
     "mercadopago": {
         "label": "Mercado Pago",
@@ -175,7 +180,7 @@ except Exception:  # Local SQLite can run even before psycopg is installed.
 
 DBIntegrityError = (sqlite3.IntegrityError, PSYCOPG_INTEGRITY)
 
-app = FastAPI(title="ClassificaJá API", version="2.18.14")
+app = FastAPI(title="ClassificaJá API", version="2.18.15")
 _cors = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -583,6 +588,7 @@ def send_new_product_push(product_id: str):
             rows = db.execute(
                 """SELECT s.id subscription_id,s.user_id,s.endpoint,s.p256dh,s.auth,
                           COALESCE(pref.enabled,0) pref_enabled,
+                          COALESCE(pref.new_products_enabled,1) new_products_enabled,
                           COALESCE(pref.city_only,1) city_only,
                           COALESCE(pref.featured_only,0) featured_only,
                           COALESCE(pref.category_slug,'') category_slug,
@@ -607,7 +613,7 @@ def send_new_product_push(product_id: str):
         stale_ids = []
         for row in rows:
             sub = dict(row)
-            if not bool(sub.get("pref_enabled")):
+            if not bool(sub.get("pref_enabled")) or not bool(sub.get("new_products_enabled")):
                 continue
             if bool(sub.get("city_only")) and (sub.get("user_city") or "").strip().casefold() != (p.get("city") or "").strip().casefold():
                 continue
@@ -626,6 +632,217 @@ def send_new_product_push(product_id: str):
                 db.commit()
     except Exception as exc:
         print(f"[push] Falha no envio do anúncio {product_id}: {exc}")
+
+
+_PUSH_RETENTION_FIELDS = {
+    "messages_enabled", "favorites_enabled", "performance_enabled",
+    "expiry_enabled", "weekly_summary_enabled", "inactivity_enabled",
+}
+
+def send_user_push(user_id: str, payload: dict, preference_field: str) -> int:
+    """Envia push para todos os aparelhos ativos do usuário respeitando preferência."""
+    if preference_field not in _PUSH_RETENTION_FIELDS:
+        return 0
+    with conn() as db:
+        pref = db.execute(
+            f"SELECT enabled,{preference_field} allowed FROM push_preferences WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        if not pref or not bool(pref["enabled"]) or not bool(pref["allowed"]):
+            return 0
+        subscriptions = db.execute(
+            "SELECT id,endpoint,p256dh,auth FROM push_subscriptions WHERE user_id=? AND active=1",
+            (user_id,),
+        ).fetchall()
+    delivered = 0
+    stale_ids = []
+    for row in subscriptions:
+        sub = dict(row)
+        ok, status = _send_webpush(sub, payload)
+        if ok:
+            delivered += 1
+        elif status in {404, 410}:
+            stale_ids.append(sub["id"])
+    if stale_ids:
+        with conn() as db:
+            for sid in stale_ids:
+                db.execute("UPDATE push_subscriptions SET active=0,updated_at=? WHERE id=?", (now_iso(), sid))
+            db.commit()
+    return delivered
+
+
+def _claim_retention_event(db, event_key: str, user_id: str, event_type: str, product_id: str | None = None) -> bool:
+    if db.execute("SELECT 1 FROM retention_events WHERE event_key=?", (event_key,)).fetchone():
+        return False
+    db.execute(
+        "INSERT INTO retention_events(event_key,user_id,event_type,product_id,created_at) VALUES (?,?,?,?,?) ON CONFLICT(event_key) DO NOTHING",
+        (event_key, user_id, event_type, product_id, now_iso()),
+    )
+    return db.last_rowcount > 0
+
+
+def _create_target_notification(db, user_id: str, ntype: str, title: str, body: str, action_url: str, product_id: str | None = None):
+    nid = str(uuid.uuid4())
+    db.execute(
+        """INSERT INTO notifications(id,type,product_id,title,body,created_at,target_user_id,action_url)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (nid, ntype, product_id, title, body, now_iso(), user_id, action_url),
+    )
+    return nid
+
+
+def _retention_push_payload(title: str, body: str, url: str, tag: str, image: str | None = None):
+    return {
+        "title": title, "body": body, "url": url, "icon": "/logo-classificaja.png",
+        "badge": "/favicon.png", "image": _push_media_url(image), "tag": tag,
+        "actionTitle": "Abrir no ClassificaJá",
+    }
+
+
+def run_retention_cycle():
+    """Cria lembretes úteis com cadência controlada e chaves idempotentes.
+
+    Regras de cadência:
+    - mensagens e favoritos são eventos imediatos e não passam por este ciclo;
+    - lembretes programados usam prioridade: vencimento > retorno > desempenho > resumo;
+    - no máximo um lembrete programado por usuário a cada 24h.
+    """
+    if not RETENTION_ENABLED:
+        return
+    try:
+        now = now_dt()
+        today = now.date().isoformat()
+        iso_year, iso_week, _ = now.isocalendar()
+        week_key = f"{iso_year}-W{iso_week:02d}"
+        cutoff24 = (now - timedelta(hours=24)).isoformat()
+        pushes = []
+        with conn() as db:
+            users = db.execute(
+                """SELECT u.id,u.name,u.created_at,u.last_seen_at,
+                          COALESCE(pref.performance_enabled,1) performance_enabled,
+                          COALESCE(pref.expiry_enabled,1) expiry_enabled,
+                          COALESCE(pref.weekly_summary_enabled,1) weekly_summary_enabled,
+                          COALESCE(pref.inactivity_enabled,1) inactivity_enabled
+                   FROM users u
+                   JOIN push_preferences pref ON pref.user_id=u.id AND pref.enabled=1
+                   WHERE u.status='active'
+                     AND EXISTS(SELECT 1 FROM push_subscriptions s WHERE s.user_id=u.id AND s.active=1)"""
+            ).fetchall()
+            for row in users:
+                uid = row["id"]
+                total_ads = db.execute("SELECT COUNT(*) n FROM products WHERE seller_id=?", (uid,)).fetchone()["n"] or 0
+                if not total_ads:
+                    continue
+
+                # Não empilha lembretes automáticos no mesmo dia.
+                recent = db.execute(
+                    """SELECT 1 FROM retention_events
+                       WHERE user_id=? AND event_type IN ('plan_expiry','plan_expired','inactivity_reminder','seller_performance','weekly_summary')
+                         AND created_at>=? LIMIT 1""",
+                    (uid, cutoff24),
+                ).fetchone()
+                if recent:
+                    continue
+
+                scheduled = False
+
+                # 1) Vencimento/expiração — maior prioridade.
+                if bool(row["expiry_enabled"]):
+                    access = get_publish_plan_access(db, uid)
+                    expiry = _parse_iso_dt(access.get("expires_at")) if access else None
+                    if expiry and expiry > now:
+                        days = max(0, (expiry.date() - now.date()).days)
+                        if days in {7, 3, 1}:
+                            key = f"expiry:{uid}:{expiry.date().isoformat()}:{days}"
+                            if _claim_retention_event(db, key, uid, "plan_expiry"):
+                                plan_name = (access.get("plan") or {}).get("name") or "Seu plano"
+                                body = f"{plan_name} vence em {days} dia{'s' if days != 1 else ''}. Renove para continuar publicando sem interrupção."
+                                _create_target_notification(db, uid, "plan_expiry", "Seu plano está perto de vencer", body, "/escolher-plano")
+                                pushes.append((uid, "expiry_enabled", _retention_push_payload("ClassificaJá • Plano vencendo", body, "/escolher-plano", key)))
+                                scheduled = True
+                    elif not scheduled:
+                        # Se não há acesso vigente, procura o último plano pago expirado recentemente.
+                        expired_row = db.execute(
+                            """SELECT plan_code,expires_at FROM publish_entitlements
+                               WHERE user_id=? AND expires_at IS NOT NULL AND expires_at<=?
+                               ORDER BY expires_at DESC LIMIT 1""",
+                            (uid, now.isoformat()),
+                        ).fetchone()
+                        if expired_row:
+                            expired_at = _parse_iso_dt(expired_row["expires_at"])
+                            if expired_at and timedelta(0) <= now - expired_at <= timedelta(days=2):
+                                key = f"expired:{uid}:{expired_at.date().isoformat()}"
+                                if _claim_retention_event(db, key, uid, "plan_expired"):
+                                    meta = get_plan(expired_row["plan_code"], db, include_inactive=True) or {}
+                                    plan_name = meta.get("name") or "Seu plano"
+                                    body = f"{plan_name} venceu. Renove para recuperar seu acesso de publicação e continuar divulgando seus anúncios."
+                                    _create_target_notification(db, uid, "plan_expired", "Seu plano venceu", body, "/escolher-plano")
+                                    pushes.append((uid, "expiry_enabled", _retention_push_payload("ClassificaJá • Plano vencido", body, "/escolher-plano", key)))
+                                    scheduled = True
+
+                # 2) Reativação depois de 7 dias sem entrar.
+                if not scheduled and bool(row["inactivity_enabled"]):
+                    last_seen = _parse_iso_dt(row.get("last_seen_at") if hasattr(row, "get") else row["last_seen_at"])
+                    if not last_seen:
+                        last_seen = _parse_iso_dt(row.get("created_at") if hasattr(row, "get") else row["created_at"])
+                    if last_seen and now - last_seen >= timedelta(days=7):
+                        key = f"inactive:{uid}:{week_key}"
+                        if _claim_retention_event(db, key, uid, "inactivity_reminder"):
+                            views = db.execute("SELECT COALESCE(SUM(views),0) n FROM products WHERE seller_id=?", (uid,)).fetchone()["n"] or 0
+                            body = f"Seus anúncios continuam no ClassificaJá e já somam {views} visualização(ões). Veja como estão."
+                            _create_target_notification(db, uid, "inactivity_reminder", "Seus anúncios continuam recebendo visitas", body, "/painel")
+                            pushes.append((uid, "inactivity_enabled", _retention_push_payload("ClassificaJá • Seus anúncios", body, "/painel", key)))
+                            scheduled = True
+
+                # 3) Desempenho das últimas 24h, apenas quando houve atividade.
+                if not scheduled and bool(row["performance_enabled"]):
+                    since = (now - timedelta(hours=24)).isoformat()
+                    views24 = db.execute(
+                        """SELECT COUNT(*) n FROM product_view_events v JOIN products p ON p.id=v.product_id
+                           WHERE p.seller_id=? AND v.viewed_at>=?""", (uid, since)
+                    ).fetchone()["n"] or 0
+                    fav24 = db.execute(
+                        """SELECT COUNT(*) n FROM favorites f JOIN products p ON p.id=f.product_id
+                           WHERE p.seller_id=? AND f.created_at IS NOT NULL AND f.created_at>=?""", (uid, since)
+                    ).fetchone()["n"] or 0
+                    if views24 or fav24:
+                        key = f"performance:{uid}:{today}"
+                        if _claim_retention_event(db, key, uid, "seller_performance"):
+                            body = f"Nas últimas 24h: {views24} visualização(ões) e {fav24} novo(s) favorito(s)."
+                            _create_target_notification(db, uid, "seller_performance", "Seus anúncios estão recebendo atenção 👀", body, "/meus-anuncios?sort=views")
+                            pushes.append((uid, "performance_enabled", _retention_push_payload("ClassificaJá • Desempenho", body, "/meus-anuncios?sort=views", key)))
+                            scheduled = True
+
+                # 4) Resumo semanal — fica por último para não competir com alertas urgentes.
+                if not scheduled and bool(row["weekly_summary_enabled"]):
+                    key = f"weekly:{uid}:{week_key}"
+                    if _claim_retention_event(db, key, uid, "weekly_summary"):
+                        totals = db.execute(
+                            "SELECT COUNT(*) total,COALESCE(SUM(views),0) views FROM products WHERE seller_id=?", (uid,)
+                        ).fetchone()
+                        favs = db.execute(
+                            "SELECT COUNT(*) n FROM favorites f JOIN products p ON p.id=f.product_id WHERE p.seller_id=?", (uid,)
+                        ).fetchone()["n"] or 0
+                        body = f"Resumo: {totals['views'] or 0} visualizações, {favs} favoritos em {totals['total'] or 0} anúncio(s)."
+                        _create_target_notification(db, uid, "weekly_summary", "Seu resumo semanal chegou", body, "/meus-anuncios?sort=views")
+                        pushes.append((uid, "weekly_summary_enabled", _retention_push_payload("ClassificaJá • Resumo semanal", body, "/meus-anuncios?sort=views", key)))
+
+            db.commit()
+
+        for uid, pref, payload in pushes:
+            try:
+                send_user_push(uid, payload, pref)
+            except Exception as exc:
+                print(f"[retention] Falha no push {uid}: {exc}")
+    except Exception as exc:
+        print(f"[retention] Falha no ciclo: {exc}")
+
+def _retention_loop():
+    # Pequeno atraso evita competir com migrações/startup e depois executa a cada hora.
+    time.sleep(20)
+    while True:
+        run_retention_cycle()
+        time.sleep(RETENTION_LOOP_SECONDS)
 
 
 def ensure_supabase_bucket():
@@ -918,6 +1135,15 @@ def init_db():
               updated_at TEXT NOT NULL,
               FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS retention_events (
+              event_key TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              event_type TEXT NOT NULL,
+              product_id TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS plan_settings (
               code TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -966,6 +1192,16 @@ def init_db():
         ensure_column(db, "users", "address_verification_status", "TEXT NOT NULL DEFAULT 'unverified'")
         ensure_column(db, "users", "avatar_verification_status", "TEXT NOT NULL DEFAULT 'unverified'")
         ensure_column(db, "users", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
+        ensure_column(db, "users", "last_seen_at", "TEXT")
+        ensure_column(db, "favorites", "created_at", "TEXT")
+        ensure_column(db, "notifications", "action_url", "TEXT")
+        ensure_column(db, "push_preferences", "new_products_enabled", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "push_preferences", "messages_enabled", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "push_preferences", "favorites_enabled", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "push_preferences", "performance_enabled", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "push_preferences", "expiry_enabled", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "push_preferences", "weekly_summary_enabled", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "push_preferences", "inactivity_enabled", "INTEGER NOT NULL DEFAULT 1")
         ensure_column(db, "sessions", "auth_provider", "TEXT NOT NULL DEFAULT 'local'")
         ensure_column(db, "sessions", "authenticated_at", "TEXT")
         # V2.18 migrates legacy plaintext bearer tokens in-place to SHA-256.
@@ -1158,6 +1394,9 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_notifications_target_created ON notifications(target_user_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_active ON push_subscriptions(user_id, active)",
             "CREATE INDEX IF NOT EXISTS idx_push_preferences_enabled ON push_preferences(enabled)",
+            "CREATE INDEX IF NOT EXISTS idx_retention_events_user_created ON retention_events(user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at)",
+            "CREATE INDEX IF NOT EXISTS idx_favorites_created ON favorites(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_support_requests_status_created ON support_requests(status, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_support_requests_category_created ON support_requests(category, created_at)",
@@ -1370,6 +1609,9 @@ def init_db():
 @app.on_event("startup")
 def startup():
     init_db()
+    if RETENTION_ENABLED:
+        thread = threading.Thread(target=_retention_loop, name="classificaja-retention", daemon=True)
+        thread.start()
 
 
 class RegisterIn(BaseModel):
@@ -1421,6 +1663,13 @@ class PushPreferencesIn(BaseModel):
     city_only: bool = True
     featured_only: bool = False
     category_slug: str = Field(default="", max_length=80)
+    new_products_enabled: bool = True
+    messages_enabled: bool = True
+    favorites_enabled: bool = True
+    performance_enabled: bool = True
+    expiry_enabled: bool = True
+    weekly_summary_enabled: bool = True
+    inactivity_enabled: bool = True
 
 
 class PaymentIn(BaseModel):
@@ -2019,6 +2268,7 @@ def create_session(db, user_id: str, provider: str = "local"):
         "INSERT INTO sessions(token,user_id,expires_at,auth_provider,authenticated_at) VALUES (?,?,?,?,?)",
         (session_token_key(token), user_id, expires, provider or "local", authenticated_at),
     )
+    db.execute("UPDATE users SET last_seen_at=? WHERE id=?", (authenticated_at, user_id))
     db.commit()
     return token
 
@@ -2062,6 +2312,11 @@ def current_user(authorization: Optional[str] = Header(default=None)):
                WHERE s.token IN (?,?) AND s.expires_at>?""",
             (raw_token, hashed_token, now_iso()),
         ).fetchone()
+        if row:
+            last_seen = _parse_iso_dt(_row_value(row, "last_seen_at", ""))
+            if not last_seen or now_dt() - last_seen >= timedelta(hours=6):
+                db.execute("UPDATE users SET last_seen_at=? WHERE id=?", (now_iso(), row["id"]))
+                db.commit()
     if not row or row["status"] != "active":
         raise HTTPException(401, "Sessão inválida, expirada ou conta bloqueada")
     return dict(row)
@@ -2312,7 +2567,7 @@ def products_to_dicts(db, rows, user_id: str | None = None):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "ClassificaJá", "version": "2.18.14", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
+    return {"ok": True, "service": "ClassificaJá", "version": "2.18.15", "database": "postgresql" if USE_POSTGRES else "sqlite", "storage": "supabase" if USE_SUPABASE_STORAGE else "local"}
 
 
 def _verify_google_credential(credential: str) -> dict:
@@ -3358,13 +3613,23 @@ def my_push_preferences(user=Depends(current_user)):
             "SELECT COUNT(*) n FROM push_subscriptions WHERE user_id=? AND active=1", (user["id"],)
         ).fetchone()["n"]
     data = dict(row) if row else {
-        "user_id": user["id"], "enabled": 0, "city_only": 1, "featured_only": 0, "category_slug": "", "updated_at": None,
+        "user_id": user["id"], "enabled": 0, "city_only": 1, "featured_only": 0, "category_slug": "",
+        "new_products_enabled": 1, "messages_enabled": 1, "favorites_enabled": 1,
+        "performance_enabled": 1, "expiry_enabled": 1, "weekly_summary_enabled": 1, "inactivity_enabled": 1,
+        "updated_at": None,
     }
     return {
         "enabled": bool(data.get("enabled")),
         "city_only": bool(data.get("city_only")),
         "featured_only": bool(data.get("featured_only")),
         "category_slug": data.get("category_slug") or "",
+        "new_products_enabled": bool(data.get("new_products_enabled", 1)),
+        "messages_enabled": bool(data.get("messages_enabled", 1)),
+        "favorites_enabled": bool(data.get("favorites_enabled", 1)),
+        "performance_enabled": bool(data.get("performance_enabled", 1)),
+        "expiry_enabled": bool(data.get("expiry_enabled", 1)),
+        "weekly_summary_enabled": bool(data.get("weekly_summary_enabled", 1)),
+        "inactivity_enabled": bool(data.get("inactivity_enabled", 1)),
         "active_subscriptions": int(active_subscriptions or 0),
         "city": user.get("city") or "",
     }
@@ -3378,14 +3643,25 @@ def update_push_preferences(payload: PushPreferencesIn, user=Depends(current_use
             raise HTTPException(400, "Categoria inválida")
         now = now_iso()
         db.execute(
-            """INSERT INTO push_preferences(user_id,enabled,city_only,featured_only,category_slug,updated_at)
-               VALUES (?,?,?,?,?,?)
+            """INSERT INTO push_preferences(user_id,enabled,city_only,featured_only,category_slug,new_products_enabled,messages_enabled,favorites_enabled,performance_enabled,expiry_enabled,weekly_summary_enabled,inactivity_enabled,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,city_only=excluded.city_only,
-                 featured_only=excluded.featured_only,category_slug=excluded.category_slug,updated_at=excluded.updated_at""",
-            (user["id"], 1 if payload.enabled else 0, 1 if payload.city_only else 0, 1 if payload.featured_only else 0, category_slug, now),
+                 featured_only=excluded.featured_only,category_slug=excluded.category_slug,new_products_enabled=excluded.new_products_enabled,
+                 messages_enabled=excluded.messages_enabled,favorites_enabled=excluded.favorites_enabled,performance_enabled=excluded.performance_enabled,
+                 expiry_enabled=excluded.expiry_enabled,weekly_summary_enabled=excluded.weekly_summary_enabled,inactivity_enabled=excluded.inactivity_enabled,
+                 updated_at=excluded.updated_at""",
+            (user["id"], 1 if payload.enabled else 0, 1 if payload.city_only else 0, 1 if payload.featured_only else 0, category_slug,
+             1 if payload.new_products_enabled else 0, 1 if payload.messages_enabled else 0, 1 if payload.favorites_enabled else 0,
+             1 if payload.performance_enabled else 0, 1 if payload.expiry_enabled else 0, 1 if payload.weekly_summary_enabled else 0,
+             1 if payload.inactivity_enabled else 0, now),
         )
         db.commit()
-    return {"ok": True, "enabled": payload.enabled, "city_only": payload.city_only, "featured_only": payload.featured_only, "category_slug": category_slug}
+    return {
+        "ok": True, "enabled": payload.enabled, "city_only": payload.city_only, "featured_only": payload.featured_only,
+        "category_slug": category_slug, "new_products_enabled": payload.new_products_enabled, "messages_enabled": payload.messages_enabled,
+        "favorites_enabled": payload.favorites_enabled, "performance_enabled": payload.performance_enabled, "expiry_enabled": payload.expiry_enabled,
+        "weekly_summary_enabled": payload.weekly_summary_enabled, "inactivity_enabled": payload.inactivity_enabled,
+    }
 
 
 @app.post("/api/me/push-subscriptions")
@@ -3529,18 +3805,28 @@ def read_all_notifications(user=Depends(current_user)):
 
 
 @app.post("/api/products/{product_id}/favorite")
-def toggle_favorite(product_id: str, user=Depends(current_user)):
+def toggle_favorite(product_id: str, background_tasks: BackgroundTasks, user=Depends(current_user)):
+    push_target = None
+    push_payload = None
     with conn() as db:
-        if not db.execute("SELECT 1 FROM products WHERE id=?", (product_id,)).fetchone():
+        product = db.execute("SELECT id,seller_id,title,image_url FROM products WHERE id=?", (product_id,)).fetchone()
+        if not product:
             raise HTTPException(404, "Anúncio não encontrado")
         exists = db.execute("SELECT 1 FROM favorites WHERE user_id=? AND product_id=?", (user["id"], product_id)).fetchone()
         if exists:
             db.execute("DELETE FROM favorites WHERE user_id=? AND product_id=?", (user["id"], product_id))
             favorite = False
         else:
-            db.execute("INSERT INTO favorites(user_id,product_id) VALUES (?,?)", (user["id"], product_id))
+            db.execute("INSERT INTO favorites(user_id,product_id,created_at) VALUES (?,?,?)", (user["id"], product_id, now_iso()))
             favorite = True
+            if product["seller_id"] != user["id"]:
+                body = f'“{product["title"]}” recebeu um novo favorito.'
+                _create_target_notification(db, product["seller_id"], "seller_favorite", "Seu anúncio recebeu um favorito ❤️", body, f"/produto/{product_id}", product_id)
+                push_target = product["seller_id"]
+                push_payload = _retention_push_payload("ClassificaJá • Novo favorito ❤️", body, f"/produto/{product_id}", f"favorite-{product_id}-{user['id']}", product.get("image_url") if hasattr(product, 'get') else product["image_url"])
         db.commit()
+    if push_target and push_payload:
+        background_tasks.add_task(send_user_push, push_target, push_payload, "favorites_enabled")
     return {"favorite": favorite}
 
 
@@ -3647,7 +3933,7 @@ def conversation_messages(conversation_id: str, user=Depends(current_user)):
 
 
 @app.post("/api/conversations/{conversation_id}/messages")
-def send_message(conversation_id: str, payload: MessageIn, user=Depends(current_user)):
+def send_message(conversation_id: str, payload: MessageIn, background_tasks: BackgroundTasks, user=Depends(current_user)):
     body = payload.body.strip()
     if not body:
         raise HTTPException(400, "Mensagem vazia")
@@ -3669,12 +3955,18 @@ def send_message(conversation_id: str, payload: MessageIn, user=Depends(current_
         product_title = product["title"] if product else "anúncio"
         sender_name = sender["name"] if sender and sender["name"] else "Usuário"
         preview = body if len(body) <= 90 else body[:87] + "..."
+        notif_body = f"{sender_name} • {product_title}: {preview}"
         db.execute(
-            """INSERT INTO notifications(id,type,product_id,title,body,created_at,target_user_id,conversation_id)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (str(uuid.uuid4()), "chat_message", c["product_id"], "Nova mensagem no chat", f"{sender_name} • {product_title}: {preview}", created_at, recipient_id, conversation_id),
+            """INSERT INTO notifications(id,type,product_id,title,body,created_at,target_user_id,conversation_id,action_url)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (str(uuid.uuid4()), "chat_message", c["product_id"], "Nova mensagem no chat", notif_body, created_at, recipient_id, conversation_id, f"/mensagens?c={conversation_id}"),
         )
         db.commit()
+    background_tasks.add_task(
+        send_user_push, recipient_id,
+        _retention_push_payload("ClassificaJá • Nova mensagem", notif_body, f"/mensagens?c={conversation_id}", f"chat-{conversation_id}-{mid}"),
+        "messages_enabled"
+    )
     return {"id": mid}
 
 

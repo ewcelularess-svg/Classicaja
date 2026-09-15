@@ -10,7 +10,7 @@ self.addEventListener('push', event => {
     tag: data.tag || 'classificaja-notification',
     renotify: false,
     data: { url: data.url || '/' },
-    actions: [{ action: 'open', title: 'Ver anúncio' }],
+    actions: [{ action: 'open', title: data.actionTitle || 'Abrir no ClassificaJá' }],
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

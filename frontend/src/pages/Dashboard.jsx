@@ -64,7 +64,7 @@ export default function Dashboard(){
  const [partnerFile,setPartnerFile]=useState(null);
  const [partnerPreview,setPartnerPreview]=useState('');
  const [partnerBusy,setPartnerBusy]=useState(false);
- const [pushPrefs,setPushPrefs]=useState({enabled:false,city_only:true,featured_only:false,category_slug:'',active_subscriptions:0,city:''});
+ const [pushPrefs,setPushPrefs]=useState({enabled:false,city_only:true,featured_only:false,category_slug:'',new_products_enabled:true,messages_enabled:true,favorites_enabled:true,performance_enabled:true,expiry_enabled:true,weekly_summary_enabled:true,inactivity_enabled:true,active_subscriptions:0,city:''});
  const [pushConfig,setPushConfig]=useState({enabled:false,public_key:''});
  const [pushCategories,setPushCategories]=useState([]);
  const [pushBusy,setPushBusy]=useState(false);
@@ -249,7 +249,7 @@ export default function Dashboard(){
  };
 
  const persistPushPrefs=async(next)=>{
-   const clean={enabled:Boolean(next.enabled),city_only:Boolean(next.city_only),featured_only:Boolean(next.featured_only),category_slug:next.category_slug||''};
+   const clean={enabled:Boolean(next.enabled),city_only:Boolean(next.city_only),featured_only:Boolean(next.featured_only),category_slug:next.category_slug||'',new_products_enabled:Boolean(next.new_products_enabled),messages_enabled:Boolean(next.messages_enabled),favorites_enabled:Boolean(next.favorites_enabled),performance_enabled:Boolean(next.performance_enabled),expiry_enabled:Boolean(next.expiry_enabled),weekly_summary_enabled:Boolean(next.weekly_summary_enabled),inactivity_enabled:Boolean(next.inactivity_enabled)};
    await api('/api/me/push-preferences',{method:'PUT',body:JSON.stringify(clean)});
    setPushPrefs(prev=>({...prev,...clean}));
    return clean;
@@ -317,7 +317,7 @@ export default function Dashboard(){
   {activeTab==='overview'&&<>
     <div className="metric-grid compact-dashboard-metrics">{cards.map(card=><Link className="metric-card metric-card-link user-metric-link" key={card.label} to={card.to} aria-label={`${card.hint}: ${card.label}`}><span className="metric-icon">{card.icon}</span><div className="metric-card-copy"><b>{card.value}</b><small>{card.label}</small><em>{card.hint}<ChevronRight/></em></div></Link>)}</div>
     <button type="button" className={`dashboard-push-cta ${pushPrefs.enabled?'active':''}`} onClick={()=>setActiveTab('notifications')}>
-      <span className="dashboard-push-cta-icon"><BellRing/></span><span><b>{pushPrefs.enabled?'Notificações de novos anúncios ativas':'Receba novos anúncios no celular'}</b><small>{pushPrefs.enabled?'Toque para ajustar cidade, categoria ou destaques.':'Ative alertas push e escolha o que deseja receber.'}</small></span><ChevronRight/>
+      <span className="dashboard-push-cta-icon"><BellRing/></span><span><b>{pushPrefs.enabled?'Alertas e lembretes ativos':'Não deixe seus anúncios esquecidos'}</b><small>{pushPrefs.enabled?'Mensagens, favoritos, desempenho e vencimento no seu celular.':'Ative alertas úteis para acompanhar seus anúncios e voltar na hora certa.'}</small></span><ChevronRight/>
     </button>
     <div className="dashboard-actions compact-dashboard-actions"><Link to="/meus-anuncios"><b>Gerenciar anúncios</b><span>Editar, pausar ou destacar.</span></Link><Link to="/mensagens"><b>Abrir mensagens</b><span>Conversas com compradores.</span></Link><Link to="/favoritos"><b>Ver favoritos</b><span>Produtos que você salvou.</span></Link></div>
     {expiringAds.length>0 && <div className="plan-expiry-alert"><AlertTriangle/><div><b>{expiringAds.length===1?'Seu plano está perto de vencer':'Você tem planos perto de vencer'}</b><span>{expiringAds.map(item=>`${item.title} (${item.days_left ?? 0} dia${item.days_left===1?'':'s'})`).join(' • ')}</span></div></div>}
@@ -328,9 +328,9 @@ export default function Dashboard(){
       <div className="push-feature-glow"></div>
       <div className="push-feature-icon"><BellRing/></div>
       <div className="push-feature-copy">
-        <span className="push-feature-kicker">ALERTAS EM TEMPO REAL</span>
-        <h2>Novos anúncios no seu celular</h2>
-        <p>Receba uma notificação destacada quando um novo anúncio que combina com suas preferências for publicado.</p>
+        <span className="push-feature-kicker">CENTRAL DE ALERTAS</span>
+        <h2>Não perca compradores nem deixe anúncios esquecidos</h2>
+        <p>Escolha o que quer receber: mensagens, favoritos, desempenho, vencimento, resumo semanal e novos anúncios.</p>
         <div className="push-status-row">
           <span className={`push-status-pill ${pushPrefs.enabled?'on':'off'}`}>{pushPrefs.enabled?'● Ativado':'● Desativado'}</span>
           <span>{pushPermission==='granted'?'Permissão do navegador liberada':pushPermission==='denied'?'Permissão bloqueada no navegador':'Aguardando sua autorização'}</span>
@@ -344,7 +344,21 @@ export default function Dashboard(){
     {!pushSupported&&<div className="push-browser-warning"><AlertTriangle/><div><b>Navegador sem suporte</b><span>Abra o ClassificaJá pelo Chrome ou Edge atualizado para receber notificações push.</span></div></div>}
     {pushPermission==='denied'&&<div className="push-browser-warning danger"><AlertTriangle/><div><b>Notificações bloqueadas</b><span>Libere as notificações para classificaja.com.br nas configurações do navegador e depois toque em Ativar.</span></div></div>}
 
-    <div className="push-preference-grid">
+    <div className="push-preference-group">
+      <div className="push-preference-group-head"><div><span>SEUS ANÚNCIOS</span><h3>Alertas para trazer você de volta na hora certa</h3><p>Esses avisos ajudam a acompanhar interessados, desempenho e vencimentos sem precisar lembrar de entrar no site.</p></div></div>
+      <div className="push-preference-grid retention-grid">
+        <div className="push-preference-card"><div><MessageCircle/><span><b>Novas mensagens</b><small>Avise imediatamente quando alguém chamar pelo seu anúncio.</small></span></div><button type="button" className={`mini-switch ${pushPrefs.messages_enabled?'on':''}`} onClick={()=>updatePushOption({messages_enabled:!pushPrefs.messages_enabled})}><span></span></button></div>
+        <div className="push-preference-card"><div><Heart/><span><b>Novos favoritos</b><small>Saiba quando alguém demonstrar interesse salvando seu anúncio.</small></span></div><button type="button" className={`mini-switch ${pushPrefs.favorites_enabled?'on':''}`} onClick={()=>updatePushOption({favorites_enabled:!pushPrefs.favorites_enabled})}><span></span></button></div>
+        <div className="push-preference-card"><div><Eye/><span><b>Desempenho diário</b><small>Resumo quando houver novas visualizações ou favoritos nas últimas 24h.</small></span></div><button type="button" className={`mini-switch ${pushPrefs.performance_enabled?'on':''}`} onClick={()=>updatePushOption({performance_enabled:!pushPrefs.performance_enabled})}><span></span></button></div>
+        <div className="push-preference-card"><div><Clock3/><span><b>Vencimento do plano</b><small>Lembretes 7, 3 e 1 dia antes do vencimento para não interromper suas publicações.</small></span></div><button type="button" className={`mini-switch ${pushPrefs.expiry_enabled?'on':''}`} onClick={()=>updatePushOption({expiry_enabled:!pushPrefs.expiry_enabled})}><span></span></button></div>
+        <div className="push-preference-card"><div><History/><span><b>Resumo semanal</b><small>Veja visualizações, favoritos e quantidade de anúncios em um único aviso.</small></span></div><button type="button" className={`mini-switch ${pushPrefs.weekly_summary_enabled?'on':''}`} onClick={()=>updatePushOption({weekly_summary_enabled:!pushPrefs.weekly_summary_enabled})}><span></span></button></div>
+        <div className="push-preference-card"><div><RefreshCw/><span><b>Lembrete de retorno</b><small>Se ficar 7 dias sem entrar, receba no máximo um lembrete por semana.</small></span></div><button type="button" className={`mini-switch ${pushPrefs.inactivity_enabled?'on':''}`} onClick={()=>updatePushOption({inactivity_enabled:!pushPrefs.inactivity_enabled})}><span></span></button></div>
+      </div>
+    </div>
+
+    <div className="push-preference-group">
+      <div className="push-preference-group-head"><div><span>DESCOBERTA</span><h3>Novos anúncios do ClassificaJá</h3><p>Controle separadamente os avisos de novas oportunidades publicadas no marketplace.</p></div><button type="button" className={`mini-switch ${pushPrefs.new_products_enabled?'on':''}`} onClick={()=>updatePushOption({new_products_enabled:!pushPrefs.new_products_enabled})}><span></span></button></div>
+      <div className={`push-preference-grid ${pushPrefs.new_products_enabled?'':'is-disabled'}`}>
       <div className="push-preference-card">
         <div><MapPin/><span><b>Somente minha cidade</b><small>{pushPrefs.city?`Receber anúncios de ${pushPrefs.city}.`:'Cadastre sua cidade no perfil para usar este filtro.'}</small></span></div>
         <button type="button" className={`mini-switch ${pushPrefs.city_only?'on':''}`} disabled={!pushPrefs.city} onClick={()=>updatePushOption({city_only:!pushPrefs.city_only})}><span></span></button>
@@ -360,13 +374,14 @@ export default function Dashboard(){
           {pushCategories.map(cat=><option key={cat.slug} value={cat.slug}>{cat.icon} {cat.name}</option>)}
         </select>
       </label>
+      </div>
     </div>
 
     <div className="push-test-card">
       <div><BellRing/><span><b>Teste no aparelho</b><small>Envia uma notificação agora para confirmar que está funcionando.</small></span></div>
       <button type="button" className="secondary-btn" disabled={pushBusy||!pushPrefs.enabled} onClick={testPush}>Enviar teste</button>
     </div>
-    <p className="push-privacy-note">Você só recebe notificações depois de ativar. O ClassificaJá não envia o seu próprio anúncio para você e você pode desativar a qualquer momento.</p>
+    <p className="push-privacy-note">Você só recebe notificações depois de ativar. Cada tipo de alerta pode ser ligado ou desligado a qualquer momento. O ClassificaJá não envia seu próprio anúncio como novidade para você.</p>
   </section>}
 
   {activeTab==='profile'&&<section className="profile-security-section">

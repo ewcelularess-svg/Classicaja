@@ -1,4 +1,4 @@
-# ClassificaJá V2.18.14
+# ClassificaJá V2.18.15
 
 Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.13 mantém as correções anteriores e adiciona um rodapé profissional com Central de Atendimento integrada ao Painel Master.
 
@@ -65,7 +65,7 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.14"`.
+A resposta deve indicar `"version":"2.18.15"`.
 
 ## Migração automática
 
@@ -174,3 +174,12 @@ Opcionalmente, instalações que desejarem controlar suas próprias chaves podem
 
 Produção deve usar HTTPS. Chrome/Edge no Android oferecem o fluxo principal. O formato visual final da notificação é controlado pelo sistema operacional/navegador.
 
+
+
+## V2.18.15 — Retenção de usuários
+
+A Central de Notificações do painel agora separa os alertas de descoberta dos alertas relacionados aos próprios anúncios. O usuário pode ativar/desativar individualmente: novas mensagens, novos favoritos, desempenho diário, vencimento/expiração, resumo semanal, lembrete de retorno e novos anúncios do marketplace.
+
+O backend envia mensagens e favoritos imediatamente e roda um ciclo idempotente de retenção para lembretes programados. Para evitar spam, existe prioridade entre lembretes e no máximo um lembrete programado por usuário a cada 24 horas.
+
+Não é obrigatório adicionar novas variáveis no Railway. Opcionalmente, `RETENTION_ENABLED=false` desliga o ciclo automático e `RETENTION_LOOP_SECONDS` altera o intervalo (mínimo de 900 segundos).
