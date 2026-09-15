@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {
   BadgeCheck, Ban, CheckCircle2, CircleDollarSign, Crown, Eye, ExternalLink, Flag, Handshake, LayoutDashboard,
-  KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud
+  KeyRound, Landmark, LockKeyhole, PackageOpen, PlugZap, PlusCircle, Search, ShieldCheck, Trash2, UserCog, Users, WalletCards, XCircle, UploadCloud, ImageIcon
 } from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api,imageUrl} from '../lib/api';
@@ -117,6 +117,87 @@ function PaymentIntegrationCard({integration,onSaved}){
   </article>
 }
 
+function HomeSliderManager({items,onSaved}){
+  const blank={title:'',subtitle:'',image_url:'',target_url:'',active:true,sort_order:0};
+  const [form,setForm]=useState(blank);
+  const [editingId,setEditingId]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [imageFile,setImageFile]=useState(null);
+  const [imagePreview,setImagePreview]=useState('');
+
+  const clearPreview=()=>{
+    if(imagePreview?.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
+    setImagePreview('');
+  };
+  const reset=()=>{clearPreview();setImageFile(null);setEditingId(null);setForm(blank)};
+  const edit=(item)=>{
+    clearPreview();setImageFile(null);setEditingId(item.id);
+    setForm({title:item.title||'',subtitle:item.subtitle||'',image_url:item.image_url||'',target_url:item.target_url||'',active:Boolean(item.active),sort_order:Number(item.sort_order||0)});
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+  const chooseImage=(e)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    clearPreview();
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
+  const save=async()=>{
+    setBusy(true);
+    try{
+      let finalImage=form.image_url||'';
+      if(imageFile){
+        const fd=new FormData();fd.append('image',imageFile);
+        const uploaded=await api('/api/admin/home-slides/image',{method:'POST',body:fd});
+        finalImage=uploaded.image_url||'';
+      }
+      if(!finalImage){alert('Selecione uma imagem para o slider.');setBusy(false);return}
+      const payload={...form,image_url:finalImage,sort_order:Number(form.sort_order||0)};
+      await api(editingId?`/api/admin/home-slides/${editingId}`:'/api/admin/home-slides',{method:editingId?'PUT':'POST',body:JSON.stringify(payload)});
+      reset();await onSaved();
+    }catch(e){alert(e.message)}finally{setBusy(false)}
+  };
+  const remove=async(item)=>{
+    if(!confirm('Excluir este banner do slider principal?'))return;
+    try{await api(`/api/admin/home-slides/${item.id}`,{method:'DELETE'});await onSaved()}catch(e){alert(e.message)}
+  };
+  const displayImage=imagePreview || (form.image_url?imageUrl(form.image_url):'');
+
+  return <section className="partner-master-section home-slider-master-section">
+    <div className="partner-master-intro"><div><span className="section-kicker">SLIDER PRINCIPAL</span><h2>Banners controlados pelo Master</h2><p>Somente imagens cadastradas aqui aparecem no slider principal da Home. <b>Anúncios de clientes nunca entram neste espaço.</b></p></div><div className="partner-master-badge"><ImageIcon/> Exclusivo Master</div></div>
+
+    <div className="partner-editor-card">
+      <div className="partner-editor-title"><h3>{editingId?'Editar banner':'Novo banner do slider'}</h3>{editingId&&<button className="secondary-btn" onClick={reset}>Cancelar edição</button>}</div>
+      <div className="partner-editor-grid">
+        <label>Título opcional<input value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Ex.: Ofertas da semana"/></label>
+        <label>Ordem<input type="number" min="0" value={form.sort_order} onChange={e=>setForm({...form,sort_order:e.target.value})} placeholder="0"/><small className="field-help">Menor número aparece primeiro.</small></label>
+        <label className="partner-span-2">Descrição opcional<input value={form.subtitle} onChange={e=>setForm({...form,subtitle:e.target.value})} placeholder="Texto curto sobre o banner"/></label>
+
+        <div className="partner-image-manager partner-span-2 home-slider-image-manager">
+          <div className="partner-image-preview home-slider-admin-preview">{displayImage?<><span style={{backgroundImage:`url(${displayImage})`}}/><img src={displayImage} alt="Prévia do slider"/></>:<ImageIcon/>}</div>
+          <div className="partner-image-controls">
+            <b>Imagem do slider</b>
+            <span>Pode ser horizontal, quadrada ou vertical. O site adapta automaticamente sem deformar a imagem. JPG, PNG ou WEBP, até 10 MB.</span>
+            <input id="home-slider-file" className="partner-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseImage}/>
+            <label className="partner-upload-btn" htmlFor="home-slider-file"><UploadCloud/> Selecionar imagem do celular</label>
+            <input value={form.image_url} onChange={e=>setForm({...form,image_url:e.target.value})} placeholder="Ou cole uma URL externa: https://.../banner.jpg"/>
+          </div>
+        </div>
+
+        <label className="partner-span-2">Link ao clicar — opcional<input value={form.target_url} onChange={e=>setForm({...form,target_url:e.target.value})} placeholder="https://... ou deixe vazio"/></label>
+        <label className="partner-active-row"><input type="checkbox" checked={form.active} onChange={e=>setForm({...form,active:e.target.checked})}/> <span>Banner ativo</span></label>
+      </div>
+      <button className="primary" onClick={save} disabled={busy}><PlusCircle/>{busy?'Salvando...':editingId?'Salvar alterações':'Adicionar ao slider'}</button>
+    </div>
+
+    <div className="partner-admin-list home-slider-admin-list">{items.length?items.map(item=><article className="partner-admin-item" key={item.id}>
+      <div className="partner-admin-preview home-slider-list-preview">{item.image_url?<img src={imageUrl(item.image_url)} alt={item.title||'Banner'}/>:<ImageIcon/>}</div>
+      <div className="partner-admin-copy"><div><b>{item.title||'Banner sem título'}</b><span className={`master-status ${item.active?'paid':'neutral'}`}>{item.active?'Ativo':'Inativo'}</span></div><strong>{item.subtitle||'Sem descrição'}</strong><small>Ordem: {Number(item.sort_order||0)} • Slider principal da página inicial</small></div>
+      <div className="partner-admin-actions">{item.target_url&&<a className="master-link-btn" href={item.target_url} target="_blank" rel="noreferrer"><ExternalLink/>Abrir</a>}<button className="secondary-btn" onClick={()=>edit(item)}>Editar</button><button className="danger-lite-btn" onClick={()=>remove(item)}><Trash2/>Excluir</button></div>
+    </article>):<div className="empty"><h3>Nenhum banner cadastrado</h3><p>Adicione imagens acima para preencher o slider principal da Home.</p></div>}</div>
+  </section>
+}
+
 function PartnerAdsManager({items,onSaved}){
   const blank={company_name:'',title:'',subtitle:'',image_url:'',target_url:'',plan_tier:'plus',active:true};
   const [form,setForm]=useState(blank);
@@ -221,6 +302,7 @@ export default function Admin(){
  const [payments,setPayments]=useState([]);
  const [integrations,setIntegrations]=useState([]);
  const [partners,setPartners]=useState([]);
+ const [slides,setSlides]=useState([]);
  const [tab,setTab]=useState('overview');
  const [search,setSearch]=useState('');
  const [loading,setLoading]=useState(true);
@@ -229,10 +311,10 @@ export default function Admin(){
  const load=async()=>{
   setLoading(true); setErr('');
   try{
-   const [s,p,u,r,pl,py,ix,pa]=await Promise.all([
-    api('/api/admin/stats'),api('/api/admin/products'),api('/api/admin/users'),api('/api/admin/reports'),api('/api/admin/plans'),api('/api/admin/payments'),api('/api/admin/payment-integrations'),api('/api/admin/partner-ads')
+   const [s,p,u,r,pl,py,ix,pa,hs]=await Promise.all([
+    api('/api/admin/stats'),api('/api/admin/products'),api('/api/admin/users'),api('/api/admin/reports'),api('/api/admin/plans'),api('/api/admin/payments'),api('/api/admin/payment-integrations'),api('/api/admin/partner-ads'),api('/api/admin/home-slides')
    ]);
-   setStats(s);setProducts(p);setUsers(u);setReports(r);setPlans(pl);setPayments(py);setIntegrations(ix);setPartners(pa);
+   setStats(s);setProducts(p);setUsers(u);setReports(r);setPlans(pl);setPayments(py);setIntegrations(ix);setPartners(pa);setSlides(hs);
   }catch(e){setErr(e.message)}finally{setLoading(false)}
  };
  useEffect(()=>{load()},[]);
@@ -256,11 +338,11 @@ export default function Admin(){
  const metricCards=[
   ['Contas',stats?.users,<Users/>],['Anúncios',stats?.products,<PackageOpen/>],['Visualizações',stats?.views,<Eye/>],['Destaques ativos',stats?.active_boosts,<Crown/>],['Receita',money(stats?.revenue),<WalletCards/>],['Denúncias',stats?.open_reports,<Flag/>]
  ];
- const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['partners','Parcerias',Handshake],['pix','Integrações PIX',Landmark],['reports','Denúncias',Flag]];
+ const tabs=[['overview','Visão geral',LayoutDashboard],['users','Contas',Users],['products','Anúncios',PackageOpen],['plans','Planos',Crown],['payments','Pagamentos',CircleDollarSign],['slider','Slider Home',ImageIcon],['partners','Parcerias',Handshake],['pix','Integrações PIX',Landmark],['reports','Denúncias',Flag]];
 
  return <div className="page master-admin-page">
   <div className="master-admin-header">
-   <div><span className="section-kicker">PAINEL MASTER</span><h1>Central de comando do ClassificaJá</h1><p>Gerencie contas, anúncios, planos, parcerias, pagamentos, PIX e moderação em um só lugar.</p></div>
+   <div><span className="section-kicker">PAINEL MASTER</span><h1>Central de comando do ClassificaJá</h1><p>Gerencie contas, anúncios, planos, slider, parcerias, pagamentos, PIX e moderação em um só lugar.</p></div>
    <div className="master-admin-badge"><ShieldCheck/> Master Admin</div>
   </div>
 
@@ -284,6 +366,8 @@ export default function Admin(){
   {tab==='plans'&&<div className="master-plans-grid">{plans.map(p=><PlanEditor key={p.code} plan={p} onSaved={load}/>)}</div>}
 
   {tab==='payments'&&<div className="master-table-wrap"><table className="master-table"><thead><tr><th>Cliente</th><th>Plano</th><th>Anúncio</th><th>Valor</th><th>Forma</th><th>Status</th><th>Data</th><th>Ação</th></tr></thead><tbody>{filteredPayments.map(p=><tr key={p.id}><td><b>{p.user_name||'Conta removida'}</b><small>{p.user_email||''}</small></td><td>{p.plan_name}</td><td>{p.product_title||'—'}</td><td><b>{money(p.amount)}</b></td><td>{p.method==='pix'?'PIX':p.method==='card'?'Cartão':p.method}</td><td><span className={`master-status ${p.status}`}>{statusLabel(p.status)}</span></td><td>{date(p.created_at)}</td><td>{p.status==='pending'?<button className="danger-lite-btn" onClick={()=>cancelPayment(p)}><XCircle/>Cancelar</button>:'—'}</td></tr>)}</tbody></table></div>}
+
+  {tab==='slider'&&<HomeSliderManager items={slides} onSaved={load}/>}
 
   {tab==='partners'&&<PartnerAdsManager items={partners} onSaved={load}/>}
 
