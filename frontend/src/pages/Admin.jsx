@@ -337,6 +337,8 @@ export default function Admin(){
  const filteredProducts=useMemo(()=>!q?products:products.filter(p=>[p.title,p.city,p.state,p.seller_name,p.seller_email].some(v=>String(v||'').toLowerCase().includes(q))),[products,q]);
  const filteredUsers=useMemo(()=>!q?users:users.filter(u=>[u.name,u.email,u.phone,u.role,u.status].some(v=>String(v||'').toLowerCase().includes(q))),[users,q]);
  const filteredPayments=useMemo(()=>!q?payments:payments.filter(p=>[p.user_name,p.user_email,p.plan_name,p.product_title,p.status].some(v=>String(v||'').toLowerCase().includes(q))),[payments,q]);
+ const mostViewedProducts=useMemo(()=>[...products].sort((a,b)=>Number(b.views||0)-Number(a.views||0)),[products]);
+ const activeFeaturedProducts=useMemo(()=>products.filter(p=>Boolean(p.featured_active)).sort((a,b)=>Number(b.boost_level||0)-Number(a.boost_level||0)),[products]);
 
  const setProductStatus=async(id,status)=>{try{await api(`/api/admin/products/${id}/status`,{method:'PUT',body:JSON.stringify({status})});load()}catch(e){alert(e.message)}};
  const deleteProduct=async p=>{if(!confirm(`Excluir definitivamente o anúncio “${p.title}”?`))return;try{await api(`/api/admin/products/${p.id}`,{method:'DELETE'});load()}catch(e){alert(e.message)}};
@@ -371,8 +373,6 @@ export default function Admin(){
    setSearch('');
    window.requestAnimationFrame(()=>document.querySelector('.master-admin-tabs')?.scrollIntoView({behavior:'smooth',block:'start'}));
  };
- const mostViewedProducts=useMemo(()=>[...products].sort((a,b)=>Number(b.views||0)-Number(a.views||0)),[products]);
- const activeFeaturedProducts=useMemo(()=>products.filter(p=>Boolean(p.featured_active)).sort((a,b)=>Number(b.boost_level||0)-Number(a.boost_level||0)),[products]);
 
  return <div className="page master-admin-page">
   <div className="master-admin-header">
