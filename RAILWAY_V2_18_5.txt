@@ -1,0 +1,8 @@
+CLASSIFICAJÁ V2.18.5 — RAILWAY
+
+Nenhuma variável nova é necessária para esta atualização.
+O deploy deve continuar usando as variáveis já configuradas na V2.18.x.
+
+Health check:
+https://www.classificaja.com.br/api/health
+Esperado: "version":"2.18.5"

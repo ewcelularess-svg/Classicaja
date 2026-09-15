@@ -1,6 +1,6 @@
-# ClassificaJá V2.18.3
+# ClassificaJá V2.18.5
 
-Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.3 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
+Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.5 mantém as correções de segurança e as regras comerciais da V2.18.2 e melhora a seleção de fotos no mobile com ações separadas para Galeria e Câmera.
 
 ## Stack
 
@@ -12,7 +12,7 @@ Marketplace/classificados com frontend React/Vite e backend FastAPI. A V2.18.3 m
 - Pagamentos: PIX PagBank
 - Login: e-mail/senha, Google e Facebook
 
-## Regra de planos V2.18.2/V2.18.3
+## Regra de planos V2.18.2/V2.18.4
 
 - **Grátis:** 1 anúncio, 7 dias, uso único por conta.
 - **Plus:** até 5 anúncios cadastrados, validade padrão de 15 dias.
@@ -61,7 +61,7 @@ Após o deploy, valide:
 
 `https://www.classificaja.com.br/api/health`
 
-A resposta deve indicar `"version":"2.18.3"`.
+A resposta deve indicar `"version":"2.18.5"`.
 
 ## Migração automática
 
@@ -69,6 +69,17 @@ Se `plan_settings.boost_30` ainda estiver com o limite padrão anterior de 15 an
 
 Leia também `LEIA-ME_V2_18_2.txt`, `MIGRACAO_V2_18_2.md` e `VALIDACAO_V2_18_2.md`.
 
-## Fotos no mobile — V2.18.3
+## Fotos no mobile — V2.18.4
 
-Na publicação e na edição de anúncios, o celular passa a exibir ações separadas para **Galeria** e **Câmera**. A Galeria é a ação principal e continua aceitando seleção múltipla até o limite de 8 imagens. O navegador/Android decide qual seletor nativo exibir; aplicações web não conseguem forçar a abertura de um app específico como Samsung Galeria.
+O botão **Galeria** agora solicita um único tipo de mídia (`image/*`) e usa o seletor nativo do navegador (`showPicker`) quando disponível. Isso evita o fallback causado por múltiplos MIME types em Chromium/Android e aumenta a chance de abrir diretamente o Photo Picker do sistema.
+
+A aplicação continua aceitando somente **JPG/JPEG, PNG e WEBP**, com até 8 fotos e 7 MB por imagem. O botão **Câmera** permanece separado e usa `capture="environment"`.
+
+> Observação: um site não pode obrigar qualquer navegador Android a abrir um app específico como “Galeria Samsung”. A interface final depende do navegador/SO. Em Chrome/Chromium compatível, o Photo Picker pode ser usado; em navegadores sem suporte, o sistema pode exibir o seletor de arquivos.
+
+
+## Títulos dos anúncios — V2.18.5
+
+- Na página de detalhes, o título é exibido por completo, inclusive no mobile.
+- Nos cards/listagens, o título pode ocupar até 3 linhas para preservar alinhamento e legibilidade.
+- Palavras extensas quebram de forma segura sem ultrapassar o card.

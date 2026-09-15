@@ -1,0 +1,16 @@
+CLASSIFICAJÁ V2.18.5 — TÍTULOS RESPONSIVOS
+
+Correção principal:
+- O título completo passa a aparecer na página do anúncio, inclusive no mobile.
+- Cards de anúncios passam de 2 para até 3 linhas.
+- Textos longos quebram corretamente sem sair do layout.
+
+Mantido sem alterações:
+- Galeria/Câmera mobile da V2.18.4.
+- Regras de planos: Grátis 1, Plus 5, Premium 10.
+- Renovação/upgrade e demais proteções da V2.18.x.
+
+Depois do deploy no Railway, confirme:
+https://www.classificaja.com.br/api/health
+
+Esperado: "version":"2.18.5"

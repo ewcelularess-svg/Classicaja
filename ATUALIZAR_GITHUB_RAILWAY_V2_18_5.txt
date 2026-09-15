@@ -1,0 +1,11 @@
+CLASSIFICAJÁ V2.18.5 — GITHUB + RAILWAY
+
+1. Extraia ClassificaJa_V2_18_5_Arquivos_Alterados.zip.
+2. Envie os arquivos extraídos ao repositório, substituindo os arquivos existentes.
+3. Não envie o ZIP fechado para dentro do repositório.
+4. Commit na branch main.
+5. Aguarde o deploy automático do Railway.
+6. Confirme: https://www.classificaja.com.br/api/health
+7. Esperado: "version":"2.18.5"
+
+Não é necessário criar novas Variables no Railway.
